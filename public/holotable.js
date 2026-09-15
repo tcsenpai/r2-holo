@@ -138,8 +138,23 @@
 
   var live = {
     lastTool:"—", model:"—", tokens:0, errors:0,
-    events:0, lastAt:0, sidechains:0
+    events:0, lastAt:0, sidechains:0,
+    // session-wide signals the transcript hands over for free
+    cache:0, fresh:0,            // context reused vs context paid for again
+    effort:"—", speed:"—",
+    perm:"—",                    // permission mode in force
+    files:0, lastFile:"—",       // footprint on the bench
+    queue:0,                     // messages waiting to be sent
+    turns:0, turnMs:0,           // closed turns and the last one's length
+    cost:null                    // the latest cost-state digest
   };
+  /* Cache reads are almost free, fresh input is what the bill is made of.
+     The ratio drives the projector beam's colour, so an expensive stretch
+     is visible before the ledger catches up with it. */
+  function cacheRatio(){
+    var tot = live.cache + live.fresh;
+    return tot > 0 ? live.cache/tot : 1;
+  }
 
   /* A session is bursty by nature: a tool fires, then nothing happens for
      thirty seconds while the command runs or the model thinks. Decaying to
@@ -1129,6 +1144,54 @@
       bench.add(tool);
     }
 
+    /* Session footprint. Every file the transcript records as edited leaves a
+       tile on the bench, and the tile brightens each time that file is touched
+       again. It is the only thing in the bay that PERSISTS: after an hour it
+       is a map of where the work actually went, not a momentary flash. */
+    var TILES = (function(){
+      var slots = [], order = [], byPath = {};
+      var COLS = 8, ROWS = 3;
+      for(var r=0; r<ROWS; r++) for(var c=0; c<COLS; c++){
+        var m = lineMaterial(PROJ, 0);
+        var o = new THREE.LineSegments(boxLines(0.56, 0.06, 0.34), m);
+        o.position.set(-2.45 + c*0.70, 1.20, 0.55 - r*0.40);
+        o.visible = false;
+        bench.add(o);
+        slots.push({obj:o, mat:m, lit:0, rest:0, n:0, path:null});
+      }
+      return {
+        touch: function(path){
+          var s = byPath[path];
+          if(!s){
+            if(order.length >= slots.length){        // oldest tile is recycled
+              s = order.shift();
+              delete byPath[s.path];
+              s.n = 0;
+            } else {
+              s = slots[order.length];
+            }
+            s.path = path;
+            byPath[path] = s;
+            order.push(s);
+            s.obj.visible = true;
+          }
+          s.n++;
+          s.lit = 1;
+          s.rest = Math.min(0.50, 0.14 + s.n*0.045);   // hot files stay brighter
+          return s;
+        },
+        count: function(){ return order.length; },
+        tick: function(dt){
+          for(var i=0; i<order.length; i++){
+            var s = order[i];
+            s.lit = damp(s.lit, 0, 1.7, dt);
+            s.mat.opacity = s.rest + s.lit*0.80;
+            s.obj.scale.y = 1 + s.lit*2.2;
+          }
+        }
+      };
+    })();
+
     // parts crates
     [[12.5,-5.2,0.5],[13.8,-2.2,-0.3],[11.2,-7.8,1.1],[13.2,-8.6,0.2]].forEach(function(c,i){
       addBox(workshop, 1.5, 1.5, 1.5, [c[0], 0.75, c[1]], c[2], i===1?wFaint:wLine);
@@ -1137,7 +1200,7 @@
 
     // overhead gantry with a hook on a cable
     var gantry = new THREE.Group();
-    gantry.position.y = 11.6;
+    gantry.position.y = 17.0;      // well clear of the sightlines, not overhead
     workshop.add(gantry);
     [-5.5, 5.5].forEach(function(z){
       var r=new THREE.LineSegments(boxLines(30, 0.2, 0.2), wLine);
@@ -1157,7 +1220,7 @@
     // corner pylons
     [[-15.5,-15.5],[15.5,-15.5],[-15.5,15.5],[15.5,15.5],
      [0,-16.5],[0,16.5],[-16.5,0],[16.5,0]].forEach(function(c){
-      addBox(workshop, 0.42, 13.4, 0.42, [c[0], 6.7, c[1]], 0, wFaint);
+      addBox(workshop, 0.42, 18.4, 0.42, [c[0], 9.2, c[1]], 0, wFaint);
     });
 
     // diagnostic screen on a stand
@@ -1335,6 +1398,122 @@
       bay.add(new THREE.LineSegments(g4, wWarm));
     })();
 
+    /* The bay's ledger. cost-state carries the session's real running totals
+       — spend, lines added and removed, how much of the wall clock went to
+       tools versus to the model — so this panel is read, never estimated.
+       It is also what stops the bay from meaning something only during a
+       compaction: the accounting is on the wall the whole time. */
+    var ledger = (function(){
+      var cv = document.createElement("canvas");
+      cv.width = 512; cv.height = 300;
+      var ctx = cv.getContext("2d");
+      var tex = new THREE.CanvasTexture(cv);
+      tex.minFilter = THREE.LinearFilter;
+      var mat = new THREE.MeshBasicMaterial({
+        map:tex, transparent:true, opacity:0.55,
+        blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide
+      });
+      var panel = new THREE.Mesh(new THREE.PlaneGeometry(4.3, 2.52), mat);
+      panel.position.set(0, 3.62, -1.34);
+      bay.add(panel);
+      addBox(bay, 4.45, 2.66, 0.08, [0, 3.62, -1.40], 0, wLine);
+
+      var cur = null, shown = { usd:0, added:0, removed:0 }, dirty = true;
+
+      function bar(x, y, w, h, frac, col){
+        ctx.strokeStyle = "rgba(95,227,255,0.35)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x, y, w, h);
+        ctx.fillStyle = col;
+        ctx.fillRect(x+1, y+1, Math.max(0, (w-2)*clamp(frac,0,1)), h-2);
+      }
+      function draw(){
+        ctx.fillStyle = "rgba(0,0,0,0.88)";
+        ctx.fillRect(0,0,cv.width,cv.height);
+        ctx.strokeStyle = "rgba(95,227,255,0.45)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(6,6,cv.width-12,cv.height-12);
+
+        ctx.textAlign = "left";
+        ctx.font = "13px ui-monospace, Menlo, monospace";
+        ctx.fillStyle = "rgba(95,227,255,0.75)";
+        ctx.fillText("SESSION LEDGER", 22, 34);
+
+        if(!cur){
+          ctx.fillStyle = "rgba(139,163,184,0.6)";
+          ctx.font = "15px ui-monospace, Menlo, monospace";
+          ctx.fillText("awaiting cost-state", 22, 78);
+          tex.needsUpdate = true;
+          return;
+        }
+
+        ctx.fillStyle = "#eaf7ff";
+        ctx.font = "bold 40px ui-monospace, Menlo, monospace";
+        ctx.fillText("$" + shown.usd.toFixed(2), 22, 82);
+
+        ctx.font = "12px ui-monospace, Menlo, monospace";
+        ctx.fillStyle = "rgba(139,163,184,0.8)";
+        ctx.fillText("elapsed " + Math.round(cur.durMs/3600000) + " h", 300, 60);
+        ctx.fillText("api " + Math.round(cur.apiMs/60000) + " min", 300, 80);
+
+        // lines added and removed, contrasted on one axis
+        var tot = Math.max(1, shown.added + shown.removed);
+        ctx.fillStyle = "rgba(95,240,168,0.85)";
+        ctx.fillText("+" + Math.round(shown.added), 22, 116);
+        ctx.textAlign = "right";
+        ctx.fillStyle = "rgba(255,95,109,0.85)";
+        ctx.fillText("−" + Math.round(shown.removed), cv.width-22, 116);
+        ctx.textAlign = "left";
+        var bw = cv.width-44;
+        var aw = bw * (shown.added/tot);
+        ctx.fillStyle = "rgba(95,240,168,0.55)"; ctx.fillRect(22, 124, aw, 12);
+        ctx.fillStyle = "rgba(255,95,109,0.55)"; ctx.fillRect(22+aw, 124, bw-aw, 12);
+
+        // thinking versus doing: the split people always guess wrong
+        var work = Math.max(1, cur.apiMs + cur.toolMs);
+        ctx.fillStyle = "rgba(139,163,184,0.8)";
+        ctx.font = "11px ui-monospace, Menlo, monospace";
+        ctx.fillText("MODEL  " + Math.round(100*cur.apiMs/work) + "%", 22, 164);
+        ctx.textAlign = "right";
+        ctx.fillText(Math.round(100*cur.toolMs/work) + "%  TOOLS", cv.width-22, 164);
+        ctx.textAlign = "left";
+        bar(22, 172, bw, 10, cur.apiMs/work, "rgba(95,227,255,0.55)");
+
+        // per model, biggest spender first — the fleet's own bill
+        var y = 206;
+        for(var i=0; i<cur.models.length && i<3; i++){
+          var M = cur.models[i];
+          var nm = M.name.replace(/^claude-/,"").replace(/-\d{8}.*$/,"").slice(0,22);
+          ctx.fillStyle = "rgba(95,227,255,0.7)";
+          ctx.fillText(nm, 22, y);
+          ctx.textAlign = "right";
+          ctx.fillStyle = "#eaf7ff";
+          ctx.fillText("$" + M.usd.toFixed(2), cv.width-22, y);
+          ctx.textAlign = "left";
+          bar(22, y+6, bw, 6, M.usd/Math.max(0.0001,cur.models[0].usd), "rgba(95,227,255,0.35)");
+          y += 30;
+        }
+        tex.needsUpdate = true;
+      }
+      draw();
+
+      return {
+        set: function(c){ cur = c; dirty = true; },
+        data: function(){ return cur; },
+        tick: function(dt){
+          if(!cur) return;
+          // the totals roll up rather than snapping: a ledger, not a readout
+          var before = shown.usd + shown.added + shown.removed;
+          shown.usd     = damp(shown.usd,     cur.usd,     3, dt);
+          shown.added   = damp(shown.added,   cur.added,   3, dt);
+          shown.removed = damp(shown.removed, cur.removed, 3, dt);
+          if(dirty || Math.abs(before-(shown.usd+shown.added+shown.removed)) > 0.02){
+            dirty = false; draw();
+          }
+        }
+      };
+    })();
+
     /* Each fixture is a STATION for a class of work. When the bay is up the
        droid drives to the right one and the prop is mounted there, instead
        of floating beside him — the workshop stops being scenery. */
@@ -1367,22 +1546,27 @@
     };
     STATIONS.write = STATIONS.read;                      // same bench
 
-    (function(){                       // ceiling web: gives the room a top
+    /* Ceiling. It was a dense web at 15 and it read as a lid pressing down on
+       the bay: at this camera height you were always looking at it. Now it is
+       two sparse rings far above the gantry — enough to close the volume,
+       little enough to stay out of every sightline. */
+    (function(){
       var pts=[], seg=64;
-      [8,14,20].forEach(function(r){
+      [15, 22].forEach(function(r){
         for(var i=0;i<seg;i++){
+          if(i % 2) continue;                       // dashed: half the ink
           var a0=(i/seg)*Math.PI*2, a1=((i+1)/seg)*Math.PI*2;
           pts.push(Math.cos(a0)*r, 0, Math.sin(a0)*r, Math.cos(a1)*r, 0, Math.sin(a1)*r);
         }
       });
-      for(var k3=0;k3<12;k3++){
-        var a3=(k3/12)*Math.PI*2;
-        pts.push(Math.cos(a3)*8,0,Math.sin(a3)*8, Math.cos(a3)*20,0,Math.sin(a3)*20);
+      for(var k3=0;k3<6;k3++){
+        var a3=(k3/6)*Math.PI*2;
+        pts.push(Math.cos(a3)*15,0,Math.sin(a3)*15, Math.cos(a3)*22,0,Math.sin(a3)*22);
       }
       var cg2=new THREE.BufferGeometry();
       cg2.setAttribute("position", new THREE.Float32BufferAttribute(pts,3));
-      var ceil=new THREE.LineSegments(cg2, wFaint);
-      ceil.position.y = 15.0;
+      var ceil=new THREE.LineSegments(cg2, lineMaterial(PROJ, 0.08));
+      ceil.position.y = 24.0;
       workshop.add(ceil);
     })();
 
@@ -1400,8 +1584,8 @@
     }
     pick(7.0, 4.0, 3.2, [-13.0, 2.0, -3.2], {
       kind:"Station · bench", title:"Workbench",
-      body:"Where file work happens. The droid drives here and the page it is reading or writing is projected over the bench.",
-      tools:"Read · Write · Edit · MultiEdit · NotebookEdit"
+      body:"Where file work happens: the droid drives here and the page it is reading or writing is projected over the bench. The tiles laid out on the surface are the session's footprint — one per file the transcript records as edited, brighter the more often it has been touched. They stay after the work moves on.",
+      tools:"Read · Write · Edit · MultiEdit · file-history-delta"
     });
     pick(4.4, 5.2, 2.0, [4.5, 2.6, -13.0], {
       kind:"Station · screen", title:"Diagnostic screen",
@@ -1419,9 +1603,14 @@
       tools:"WebSearch · WebFetch · MCP tools"
     });
     pick(6.0, 7.0, 5.0, [0, 3.2, 16.0], {
-      kind:"Station · bay", title:"Charging bay",
-      body:"The droid docks here when the transcript logs a context compaction, and energy rings climb the hull. The marker says a compaction happened, not how long it took, so the dock runs for a fixed stretch.",
-      tools:"system · compact_boundary"
+      kind:"Station · bay", title:"Charging bay & ledger",
+      body:"The droid docks here when the transcript logs a context compaction, and energy rings climb the hull. The panel on the arch is the session's accounting: spend, lines added against lines removed, and how the wall clock split between the model thinking and the tools running. Those totals are read from the transcript, not estimated.",
+      tools:"compact_boundary · cost-state"
+    });
+    pick(1.6, 3.4, 1.6, [3.1, 1.7, 3.1], {
+      kind:"Station · queue", title:"Message queue",
+      body:"One block per message waiting to be sent. The transcript logs every enqueue, dequeue and removal, so the stack is the real backlog: it grows while you type ahead and burns down as the session catches up.",
+      tools:"queue-operation"
     });
     pick(3.2, 6.0, 3.2, [0, 3.0, 0], {
       kind:"Readout", title:"Holo column",
@@ -1430,7 +1619,115 @@
     });
 
     workshop.userData = { trolley:trolley, hook:hook, monitor:monitor,
-                          stations:STATIONS, mast:mast, bay:bay };
+                          stations:STATIONS, mast:mast, bay:bay,
+                          bench:bench, tiles:TILES, ledger:ledger };
+  })();
+
+  /* ===================================================================
+     5c. SESSION INSTRUMENTS
+     Four fixtures that live in world space rather than in the bay, because
+     each of them reads a signal about the session as a whole rather than
+     about one tool call.
+     =================================================================== */
+  function ringGeo(seg, dash){
+    var pts=[];
+    for(var i=0;i<seg;i++){
+      if(dash && (i%2)) continue;
+      var a0=(i/seg)*Math.PI*2, a1=((i+1)/seg)*Math.PI*2;
+      pts.push(Math.cos(a0),0,Math.sin(a0), Math.cos(a1),0,Math.sin(a1));
+    }
+    var g=new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pts,3));
+    return g;
+  }
+
+  /* --- sonar: the model is talking to the human ----------------------
+     A tool call is the droid working; prose addressed to you is the droid
+     turning round and saying something. That deserves its own gesture, and
+     a sonar ping is the one signal in the scene that travels outward to
+     where you are instead of staying on the model. */
+  var SONAR = (function(){
+    var g = ringGeo(80, false), out = [];
+    for(var k=0;k<3;k++){
+      var m = lineMaterial(new THREE.Color(0xbff4ff), 0);
+      var o = new THREE.LineSegments(g, m);
+      o.visible = false;
+      scene.add(o);
+      out.push({obj:o, mat:m, off:k*0.20});
+    }
+    return out;
+  })();
+  var SONAR_DUR = 2.0;
+  var sonarReq = false, sonarT0 = -99, sonarX = 0, sonarZ = 0;
+
+  /* --- turn rings: a record of how long each turn took ----------------
+     system/turn_duration carries a real durationMs. Each closed turn drops
+     a ring sized by its own length, and the rings fade over about a minute,
+     so the floor keeps a short memory of the session's rhythm. It also gives
+     the dead air while the model thinks something to resolve into. */
+  var TURNS = (function(){
+    var g = ringGeo(72, false), out = [];
+    for(var k=0;k<12;k++){
+      var m = lineMaterial(PROJ, 0);
+      var o = new THREE.LineSegments(g, m);
+      o.visible = false;
+      scene.add(o);
+      out.push({obj:o, mat:m, life:0, r:1, grow:0});
+    }
+    return out;
+  })();
+  function turnRing(ms){
+    // log scale: a 90 s turn should read as bigger than a 6 s one without
+    // being fifteen times the radius
+    var r = clamp(2.4 + Math.log(1 + (ms||0)/1000)*2.6, 2.4, 16);
+    var slot = null, worst = 2;
+    for(var i=0;i<TURNS.length;i++){
+      if(TURNS[i].life <= 0){ slot = TURNS[i]; break; }
+      if(TURNS[i].life < worst){ worst = TURNS[i].life; slot = TURNS[i]; }
+    }
+    slot.life = 1; slot.r = r; slot.grow = 0;
+    slot.obj.position.set(droid.position.x, 0.02, droid.position.z);
+    slot.obj.visible = true;
+  }
+
+  /* --- queue stack: messages waiting to be sent ----------------------- */
+  var QSTACK = (function(){
+    var g = new THREE.Group();
+    g.position.set(3.1, 0, 3.1);
+    scene.add(g);
+    g.add(new THREE.LineSegments(edgesOf(new THREE.BoxGeometry(1.0,0.06,1.0),1),
+                                 lineMaterial(PROJ, 0.16)));
+    var bg = edgesOf(new THREE.BoxGeometry(0.66,0.24,0.66),1), blocks = [];
+    for(var i=0;i<9;i++){
+      var m = lineMaterial(PROJ, 0);
+      var o = new THREE.LineSegments(bg, m);
+      o.position.y = 0.20 + i*0.28;
+      o.visible = false;
+      g.add(o);
+      blocks.push({obj:o, mat:m, lv:0});
+    }
+    return { group:g, blocks:blocks };
+  })();
+
+  /* --- supervision: the room says when nobody is being asked ----------
+     permission-mode is the one signal in the transcript with a real safety
+     meaning, and it was the one thing here you could not see. Under
+     bypassPermissions the perimeter goes amber. */
+  var SUPER = (function(){
+    var m = lineMaterial(AMBER, 0);
+    var ring = new THREE.LineSegments(ringGeo(96, true), m);
+    ring.position.y = 0.04;
+    ring.scale.setScalar(17.4);
+    scene.add(ring);
+    var posts = [[-15.5,-15.5],[15.5,-15.5],[-15.5,15.5],[15.5,15.5],
+                 [0,-16.5],[0,16.5],[-16.5,0],[16.5,0]];
+    var pts = [];
+    posts.forEach(function(p){ pts.push(p[0],0.1,p[1], p[0],3.4,p[1]); });
+    var pg = new THREE.BufferGeometry();
+    pg.setAttribute("position", new THREE.Float32BufferAttribute(pts,3));
+    var bars = new THREE.LineSegments(pg, m);
+    scene.add(bars);
+    return { mat:m, lit:0, ring:ring, bars:bars };
   })();
 
   /* ===================================================================
@@ -1514,8 +1811,7 @@
   /* --- station picking ------------------------------------------------ */
   var ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
   var hintEl = document.getElementById("station-hint");
-  var cardEl = document.getElementById("station-card");
-  var hovered = null, openPick = null;
+  var hovered = null, openPick = null, stationView = null;
 
   function pickAt(cx, cy){
     if(!shopOn) return null;
@@ -1528,17 +1824,17 @@
   }
   function openStation(obj){
     openPick = obj;
-    var I = obj.userData.info;
-    cardEl.querySelector(".st-kind").textContent  = I.kind;
-    cardEl.querySelector(".st-title").textContent = I.title;
-    cardEl.querySelector(".st-body").textContent  = I.body;
-    cardEl.querySelector(".st-tools").textContent = I.tools;
-    cardEl.style.display = "block";
+    stationView = obj.userData.info;
+    Object.keys(railEls).forEach(function(k){    // no subsystem is selected now
+      railEls[k].setAttribute("aria-selected", "false");
+    });
+    showReadout(true);
+    renderStation();
   }
-  function closeStation(){ openPick = null; cardEl.style.display = "none"; }
-  document.getElementById("station-close").addEventListener("click", function(e){
-    e.stopPropagation(); closeStation();
-  });
+  function closeStation(){
+    openPick = null;
+    if(stationView){ stationView = null; select(active); }
+  }
 
   /* ===================================================================
      7. RAIL, HOTSPOTS, READOUT
@@ -1585,30 +1881,82 @@
     return out.length ? out.join(", ") : "none";
   }
 
-  function renderReadout(){
-    var sys=SYSTEMS.filter(function(s){return s.id===active;})[0];
-    var m=MOD[sys.id];
-    var rows=sys.specs.map(function(p){ return "<dt>"+p[0]+"</dt><dd>"+p[1]+"</dd>"; }).join("");
-    readout.dataset.kind=sys.kind;
-    readout.innerHTML =
-      '<div class="eyebrow">'+sys.tag+' &middot; '+sys.label+'</div>'+
-      '<h2>'+sys.title+'</h2>'+
-      '<p class="note">'+sys.note+'</p>'+
-      '<dl class="specs">'+rows+'</dl>'+
-      '<div class="eyebrow live-h">Telemetry</div>'+
+  /* The session block is the same under either view: it describes the run,
+     not the thing you happen to have selected. */
+  function sessionRows(){
+    return '<div class="eyebrow live-h">Session</div>'+
       '<dl class="specs">'+
-        '<dt>Activations</dt><dd>'+fmtN(m.n)+'</dd>'+
-        '<dt>Source</dt><dd>'+sys.tools+'</dd>'+
         '<dt>Last tool</dt><dd>'+live.lastTool+'</dd>'+
-        '<dt>Fleet</dt><dd>'+fleetSummary()+'</dd>'+
         '<dt>Model</dt><dd>'+live.model+'</dd>'+
+        '<dt>Fleet</dt><dd>'+fleetSummary()+'</dd>'+
+        '<dt>Cache hit</dt><dd>'+Math.round(cacheRatio()*100)+'%</dd>'+
+        '<dt>Effort</dt><dd>'+live.effort+' &middot; '+live.speed+'</dd>'+
+        '<dt>Permissions</dt><dd>'+live.perm+'</dd>'+
+        '<dt>Queue</dt><dd>'+live.queue+'</dd>'+
+        '<dt>Turns</dt><dd>'+fmtN(live.turns)+
+          (live.turnMs ? ' <span class="mute">(last '+(live.turnMs/1000).toFixed(1)+'s)</span>' : '')+'</dd>'+
+        '<dt>Files touched</dt><dd>'+fmtN(live.files)+'</dd>'+
+        '<dt>Last file</dt><dd>'+live.lastFile+'</dd>'+
         '<dt>Events</dt><dd>'+fmtN(live.events)+'</dd>'+
         '<dt>Errors</dt><dd>'+fmtN(live.errors)+'</dd>'+
         '<dt>From subagents</dt><dd>'+fmtN(live.sidechains)+'</dd>'+
         '<dt>Tokens</dt><dd>'+fmtN(live.tokens)+'</dd>'+
+        (live.cost
+          ? '<dt>Spend</dt><dd>$'+live.cost.usd.toFixed(2)+'</dd>'+
+            '<dt>Lines</dt><dd>+'+fmtN(live.cost.added)+' / &minus;'+fmtN(live.cost.removed)+'</dd>'
+          : '<dt>Spend</dt><dd>&mdash;</dd>')+
       '</dl>';
   }
+
+  var CLOSE_BTN = '<button id="readout-close" aria-label="Close panel">&#10005;</button>';
+
+  function renderReadout(){
+    if(stationView){ renderStation(); return; }
+    var sys=SYSTEMS.filter(function(s){return s.id===active;})[0];
+    var m=MOD[sys.id];
+    var rows=sys.specs.map(function(p){ return "<dt>"+p[0]+"</dt><dd>"+p[1]+"</dd>"; }).join("");
+    readout.dataset.kind=sys.kind;
+    readout.innerHTML = CLOSE_BTN+
+      '<div class="eyebrow">'+sys.tag+' &middot; '+sys.label+'</div>'+
+      '<h2>'+sys.title+'</h2>'+
+      '<p class="note">'+sys.note+'</p>'+
+      '<dl class="specs">'+rows+'</dl>'+
+      '<dl class="specs live-h">'+
+        '<dt>Activations</dt><dd>'+fmtN(m.n)+'</dd>'+
+        '<dt>Source</dt><dd>'+sys.tools+'</dd>'+
+      '</dl>'+
+      sessionRows();
+  }
+
+  /* Clicking a fixture in the bay fills this same panel rather than opening
+     a card over the scene: one place where descriptions appear, and the
+     model stays unobscured. */
+  function renderStation(){
+    readout.dataset.kind = "std";
+    readout.innerHTML = CLOSE_BTN+
+      '<div class="eyebrow">'+stationView.kind+'</div>'+
+      '<h2>'+stationView.title+'</h2>'+
+      '<p class="note">'+stationView.body+'</p>'+
+      '<dl class="specs">'+
+        '<dt>Source</dt><dd>'+stationView.tools+'</dd>'+
+      '</dl>'+
+      sessionRows();
+  }
+
+  /* The panel can sit in front of the thing it describes, so it closes —
+     and any rail entry, any fixture, or the Panel button brings it back. */
+  var readoutOpen = true, btnPanel = null;
+  function showReadout(on){
+    readoutOpen = on;
+    readout.style.display = on ? "" : "none";
+    if(btnPanel) btnPanel.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  readout.addEventListener("click", function(e){
+    if(e.target.closest && e.target.closest("#readout-close")) showReadout(false);
+  });
   function select(id){
+    stationView = null; openPick = null;
+    showReadout(true);
     active=id;
     Object.keys(railEls).forEach(function(k){
       railEls[k].setAttribute("aria-selected", k===id ? "true":"false");
@@ -1660,29 +2008,13 @@
       el.style.zIndex = String(Math.max(0, Math.round(100000 - dist*1000)));
       el.style.opacity = clamp(1.35 - dist*0.028, 0.45, 1).toFixed(2);
     }
-    if(hovered && !openPick){
+    if(hovered){
       hintEl.style.display = "block";
       hintEl.style.transform = "translate("+hintEl.dataset.cx+"px,"+
         (Number(hintEl.dataset.cy)-22)+"px) translate(-50%,-100%)";
     } else {
       hintEl.style.display = "none";
     }
-    if(openPick){
-      hovered = null;
-      tmpTagV.copy(openPick.position);
-      openPick.parent.localToWorld(tmpTagV);
-      tmpTagV.y += openPick.geometry.parameters.height*0.5 + 0.6;
-      tmp.copy(tmpTagV); tmp.project(camera);
-      if(tmp.z > 1){ cardEl.style.display = "none"; }
-      else {
-        cardEl.style.display = "block";
-        var kk = clamp(1.3 - camera.position.distanceTo(tmpTagV)*0.018, 0.68, 1.0);
-        cardEl.style.transform =
-          "translate("+((tmp.x*0.5+0.5)*w).toFixed(1)+"px,"+((-tmp.y*0.5+0.5)*h).toFixed(1)+"px)"+
-          " scale("+kk.toFixed(3)+") translate(-50%,-100%)";
-      }
-    }
-
     tmpTagV.set(0, 5.2, 0); droid.localToWorld(tmpTagV);
     placeTag(mainTag, tmpTagV, mainTag.dataset.off === "1");
     Object.keys(spotEls).forEach(function(k){
@@ -1716,6 +2048,10 @@
              : ev.kind==="user" ? "human turn"
              : ev.kind==="mode" ? ("mode: "+(ev.label||"?"))
              : ev.kind==="title" ? "title"
+             : ev.kind==="cost" ? ("ledger $"+(ev.cost?ev.cost.usd.toFixed(2):"?"))
+             : ev.kind==="file" ? ("file "+String(ev.path||"").split("/").pop())
+             : ev.kind==="queue" ? ("queue "+(ev.op||"?"))
+             : ev.kind==="system" && ev.ms ? ((ev.label||"turn")+" "+(ev.ms/1000).toFixed(1)+"s")
              : (ev.label||ev.kind);
     row.innerHTML='<span class="ts">'+hhmm(ev.t)+'</span><span class="nm">'+name+'</span>'+
                   (ev.agent?'<span class="sd">'+ev.agent+'</span>':(ev.sidechain?'<span class="sd">sub</span>':''));
@@ -1759,14 +2095,60 @@
     bump(m,"int",0.3); return "int";
   }
 
+  /* Signals about the session rather than about one call. They are handled
+     before the per-droid routing because none of them belongs to a droid:
+     they describe the room. */
+  function sessionSignal(ev, silent){
+    if(ev.kind === "cost"){
+      live.cost = ev.cost;
+      if(workshop.userData.ledger) workshop.userData.ledger.set(ev.cost);
+      return true;
+    }
+    if(ev.kind === "file"){
+      if(workshop.userData.tiles){
+        workshop.userData.tiles.touch(ev.path);
+        live.files = workshop.userData.tiles.count();
+      }
+      live.lastFile = ev.path.split("/").pop();
+      return true;
+    }
+    if(ev.kind === "queue"){
+      if(ev.op === "enqueue") live.queue++;
+      else if(ev.op === "popAll") live.queue = 0;
+      else live.queue = Math.max(0, live.queue - 1);
+      return true;
+    }
+    if(ev.kind === "mode"){
+      live.perm = ev.label || "—";
+      return false;                       // still routes to a module
+    }
+    if(ev.kind === "system" && ev.label === "turn_duration" && ev.ms){
+      live.turns++; live.turnMs = ev.ms;
+      if(!silent) turnRing(ev.ms);
+      return false;
+    }
+    return false;
+  }
+
   function handle(ev, silent){
     live.events++;
     live.lastAt = Date.now();
     if(ev.model) live.model = ev.model;
     if(ev.tokens) live.tokens += ev.tokens;
+    if(ev.cache) live.cache += ev.cache;
+    if(ev.fresh) live.fresh += ev.fresh;
+    if(ev.effort) live.effort = ev.effort;
+    if(ev.speed) live.speed = ev.speed;
     if(ev.sidechain) live.sidechains++;
     if(ev.kind==="tool") live.lastTool = ev.tool;
     if(ev.kind==="result" && ev.error) live.errors++;
+
+    if(sessionSignal(ev, silent)){ if(!silent) pushTick(ev, false); return; }
+
+    /* Prose from the model with no subagent behind it is the session
+       addressing YOU. It is the only event here aimed outward, so it gets
+       the one outward gesture: a sonar ping off the droid. */
+    if(ev.kind === "text" && !ev.sidechain && !ev.agent && !silent) sonarReq = true;
 
     if(ev.agent && ev.kind==="tool" && ev.tool==="Task"){
       lastTask = { agent: ev.agent, at: Math.min(Date.now(), ev.t || Date.now()) };
@@ -1891,6 +2273,9 @@
     });
     live.lastTool="—"; live.model="—"; live.tokens=0;
     live.errors=0; live.events=0; live.sidechains=0; live.lastAt=0;
+    live.cache=0; live.fresh=0; live.effort="—"; live.speed="—";
+    live.perm="—"; live.files=0; live.lastFile="—"; live.queue=0;
+    live.turns=0; live.turnMs=0; live.cost=null;
     ticker.innerHTML="";
   }
 
@@ -1960,6 +2345,10 @@
   var btnInfo=document.getElementById("btn-info");
   var scrim=document.getElementById("scrim");
   var alarmEl=document.getElementById("alarm");
+
+  btnPanel=document.getElementById("btn-panel");
+  btnPanel.addEventListener("click",function(){ showReadout(!readoutOpen); });
+  showReadout(true);
 
   function syncRoam(){ btnRoam.setAttribute("aria-pressed", roamOn?"true":"false"); }
   btnRoam.addEventListener("click",function(){ roamOn=!roamOn; syncRoam(); });
@@ -2464,6 +2853,10 @@
       var want = newest && (nowMs - newestT) < 12000;
       var op = want ? Math.min(0.20, 0.07 + MOD.vck.p*0.22) : 0;
       MAIN.beamMat.opacity = damp(MAIN.beamMat.opacity, op, 6, dt);
+      // Cheap context reuse keeps the beam cyan; context being paid for again
+      // pulls it amber. Same channel as the extinguisher on purpose: both mean
+      // "this is costing you something".
+      MAIN.beamMat.color.copy(AMBER).lerp(PROJ, clamp(cacheRatio(), 0, 1));
       MAIN.beam.visible = MAIN.beamMat.opacity > 0.01;
       if(MAIN.beam.visible && newest){
         beamTarget.set(0, 2.2*newest.wrap.scale.x/newest.targetScale, 0);
@@ -2484,6 +2877,51 @@
       CR.obj.scale.setScalar(1.05 - f*0.35);
       CR.mat.opacity = 0.55 * Math.sin(f*Math.PI);
     }
+
+    /* --- sonar: the session said something to you --------------------- */
+    if(sonarReq){
+      sonarReq = false;
+      sonarT0 = t; sonarX = droid.position.x; sonarZ = droid.position.z;
+      turnDome(MAIN, -MAIN.domeTarget);        // it turns to face you as well
+    }
+    for(var si=0; si<SONAR.length; si++){
+      var S = SONAR[si];
+      var sp = (t - sonarT0)/SONAR_DUR - S.off;
+      if(sp <= 0 || sp >= 1){ S.obj.visible = false; continue; }
+      S.obj.visible = true;
+      var se = 1 - Math.pow(1-sp, 2.4);         // fast out, long tail
+      S.obj.position.set(sonarX, 0.06 + se*0.5, sonarZ);
+      S.obj.scale.setScalar(0.7 + se*13.5);
+      S.mat.opacity = 0.62 * Math.pow(1-sp, 1.6);
+    }
+
+    /* --- turn rings: the session's rhythm, laid on the floor ---------- */
+    for(var ti2=0; ti2<TURNS.length; ti2++){
+      var TR = TURNS[ti2];
+      if(TR.life <= 0){ TR.obj.visible = false; continue; }
+      TR.life -= dt/48;                         // about a minute of memory
+      TR.grow = damp(TR.grow, 1, 2.6, dt);
+      TR.obj.scale.setScalar(TR.r * TR.grow);
+      TR.mat.opacity = Math.max(0, 0.34 * TR.life * TR.grow);
+      TR.obj.visible = TR.mat.opacity > 0.006;
+    }
+
+    /* --- queue depth ---------------------------------------------------- */
+    for(var qi=0; qi<QSTACK.blocks.length; qi++){
+      var QB = QSTACK.blocks[qi];
+      QB.lv = damp(QB.lv, qi < live.queue ? 1 : 0, 5, dt);
+      QB.mat.opacity = QB.lv * (0.30 + 0.22*(0.5+0.5*Math.sin(t*1.6 - qi*0.5)));
+      QB.obj.visible = QB.lv > 0.02;
+      QB.obj.scale.setScalar(0.55 + 0.45*QB.lv);
+    }
+
+    /* --- supervision: amber perimeter while nothing is being asked ----- */
+    SUPER.lit = damp(SUPER.lit, live.perm === "bypassPermissions" ? 1 : 0, 3, dt);
+    SUPER.mat.opacity = SUPER.lit * (0.16 + 0.10*(0.5+0.5*Math.sin(t*1.1)));
+    SUPER.ring.visible = SUPER.bars.visible = SUPER.lit > 0.02;
+
+    if(workshop.userData.tiles)  workshop.userData.tiles.tick(dt);
+    if(workshop.userData.ledger) workshop.userData.ledger.tick(dt);
 
     /* --- ground shockwaves --- */
     for(var wi=0; wi<WAVES.length; wi++){

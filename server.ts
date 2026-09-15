@@ -181,7 +181,11 @@ async function listSessions(limit = 40): Promise<SessionInfo[]> {
 
 type Ev = {
   t: number;
-  kind: "tool" | "result" | "text" | "user" | "system" | "mode" | "title";
+  kind:
+    | "tool" | "result" | "text" | "user" | "system" | "mode" | "title"
+    | "cost"      // the session's own running totals
+    | "file"      // a file the transcript records as edited
+    | "queue";    // a message queued, sent or dropped
   tool?: string;
   error?: boolean;
   label?: string;
@@ -192,7 +196,32 @@ type Ev = {
   atype?: string;      // agent type: general-purpose, fork, ...
   model?: string;
   tokens?: number;
+  cache?: number;      // cache_read_input_tokens: context reused, cheaply
+  fresh?: number;      // input_tokens: context paid for again
+  effort?: string;
+  speed?: string;
+  ms?: number;         // durationMs, on the system lines that carry one
+  path?: string;       // trackingPath, home-relative
+  op?: string;         // queue-operation: enqueue / dequeue / remove / popAll
+  cost?: CostDigest;
 };
+
+/** The useful half of a cost-state line. Totals, not content. */
+type CostDigest = {
+  usd: number;
+  added: number;
+  removed: number;
+  toolMs: number;
+  apiMs: number;
+  durMs: number;
+  models: { name: string; usd: number; out: number; cr: number }[];
+};
+
+const HOME = homedir();
+function shortPath(p: unknown): string | undefined {
+  if (typeof p !== "string" || !p) return undefined;
+  return p.startsWith(HOME) ? "~" + p.slice(HOME.length) : p;
+}
 
 function normalize(line: string, agent?: string): Ev[] {
   let o: any;
@@ -213,15 +242,25 @@ function normalize(line: string, agent?: string): Ev[] {
     const usage = o.message?.usage;
     const tokens =
       (usage?.input_tokens ?? 0) + (usage?.output_tokens ?? 0) || undefined;
+    // Two very different numbers with the same name in conversation: context
+    // read back out of the cache costs almost nothing, context sent fresh is
+    // what you actually pay for. Keeping them apart is the whole point.
+    const cache = usage?.cache_read_input_tokens ?? undefined;
+    const fresh =
+      (usage?.input_tokens ?? 0) + (usage?.cache_creation_input_tokens ?? 0) ||
+      undefined;
+    const effort = o.effort ?? o.message?.effort ?? undefined;
+    const speed = o.speed ?? o.message?.speed ?? undefined;
+    const meta = { model: o.message?.model, tokens, cache, fresh, effort, speed };
     for (const b of o.message?.content ?? []) {
       if (b?.type === "tool_use") {
         evs.push(tag({
           t, kind: "tool", tool: String(b.name ?? "?"),
           id: b.id ? String(b.id) : undefined,
-          sidechain: side, model: o.message?.model, tokens,
+          sidechain: side, ...meta,
         }));
       } else if (b?.type === "text" && String(b.text ?? "").trim()) {
-        evs.push(tag({ t, kind: "text", sidechain: side, model: o.message?.model, tokens }));
+        evs.push(tag({ t, kind: "text", sidechain: side, ...meta }));
       }
     }
   } else if (o.type === "user") {
@@ -243,13 +282,103 @@ function normalize(line: string, agent?: string): Ev[] {
       evs.push(tag({ t, kind: "user", sidechain: side }));
     }
   } else if (o.type === "system") {
-    evs.push(tag({ t, kind: "system", label: o.subtype ?? undefined, sidechain: side }));
+    evs.push(tag({
+      t, kind: "system", label: o.subtype ?? undefined, sidechain: side,
+      ms: typeof o.durationMs === "number" ? o.durationMs : undefined,
+    }));
   } else if (o.type === "permission-mode") {
     evs.push({ t, kind: "mode", label: o.permissionMode ?? undefined });
   } else if (o.type === "custom-title" || o.type === "ai-title") {
     evs.push({ t, kind: "title", label: o.customTitle ?? o.aiTitle });
+  } else if (o.type === "cost-state") {
+    const mu = o.modelUsage && typeof o.modelUsage === "object" ? o.modelUsage : {};
+    const models = Object.keys(mu)
+      .map((name) => ({
+        name,
+        usd: Number(mu[name]?.costUSD ?? 0),
+        out: Number(mu[name]?.outputTokens ?? 0),
+        cr: Number(mu[name]?.cacheReadInputTokens ?? 0),
+      }))
+      .sort((a, b) => b.usd - a.usd)
+      .slice(0, 4);
+    evs.push({
+      t, kind: "cost",
+      cost: {
+        usd: Number(o.totalCostUSD ?? 0),
+        added: Number(o.totalLinesAdded ?? 0),
+        removed: Number(o.totalLinesRemoved ?? 0),
+        toolMs: Number(o.totalToolDuration ?? 0),
+        apiMs: Number(o.totalAPIDuration ?? 0),
+        durMs: Number(o.totalDuration ?? 0),
+        models,
+      },
+    });
+  } else if (o.type === "file-history-delta") {
+    // Only the path, and only relative to $HOME: which files the session is
+    // working on, never a byte of what is in them.
+    const p = shortPath(o.trackingPath);
+    if (p) evs.push(tag({ t, kind: "file", path: p, sidechain: side }));
+  } else if (o.type === "queue-operation") {
+    evs.push({ t, kind: "queue", op: String(o.operation ?? "?") });
   }
   return evs;
+}
+
+/* ------------------------------------------------------------------ *
+ * Prelude scan
+ *
+ * cost-state is written a handful of times in a whole session and
+ * file-history-delta only when a file is actually edited, so both are
+ * usually far behind the 512 KB tail the backlog reads — on a 27 MB
+ * transcript the last cost-state sat 10 MB from the end. Without this the
+ * ledger and the bench would stay empty for the rest of the run.
+ *
+ * So the file is swept once at connect, but only lines already containing
+ * the marker are parsed: two substring tests per line instead of a JSON
+ * parse, which keeps a multi-megabyte sweep in the tens of milliseconds.
+ * ------------------------------------------------------------------ */
+
+const PRELUDE_FILES = 24;                 // how many edited files to restore
+const PRELUDE_MAX = 512 * 1024 * 1024;    // don't sweep an absurd transcript
+
+async function prelude(path: string): Promise<Ev[]> {
+  let cost: Ev | null = null;
+  const files: Ev[] = [];
+  const f = await open(path, "r");
+  try {
+    const { size } = await f.stat();
+    const from = Math.max(0, size - PRELUDE_MAX);
+    const CHUNK = 8 * 1024 * 1024;
+    const buf = Buffer.alloc(CHUNK);
+    let pos = from;
+    let rest = "";
+    while (pos < size) {
+      const len = Math.min(CHUNK, size - pos);
+      const { bytesRead } = await f.read(buf, 0, len, pos);
+      if (bytesRead <= 0) break;
+      pos += bytesRead;
+      const lines = (rest + buf.toString("utf8", 0, bytesRead)).split("\n");
+      rest = lines.pop() ?? "";
+      for (const l of lines) {
+        if (l.indexOf('"cost-state"') < 0 && l.indexOf('"file-history-delta"') < 0) continue;
+        for (const e of normalize(l)) {
+          if (e.kind === "cost") cost = e;
+          else if (e.kind === "file") files.push(e);
+        }
+      }
+    }
+    for (const e of normalize(rest)) {
+      if (e.kind === "cost") cost = e;
+      else if (e.kind === "file") files.push(e);
+    }
+  } catch {
+  } finally {
+    await f.close();
+  }
+  // oldest first, so the bench tiles land in the order they were edited
+  const out = files.slice(-PRELUDE_FILES);
+  if (cost) out.push(cost);
+  return out;
 }
 
 /* ------------------------------------------------------------------ *
@@ -313,6 +442,8 @@ function streamSession(parentPath: string): Response {
         } catch {}
       };
 
+      // --- session-wide state that lives outside the tail window ---
+      const pre = await prelude(parentPath);
       const backlog: Ev[] = [];
 
       // --- parent backlog ---
@@ -356,7 +487,9 @@ function streamSession(parentPath: string): Response {
       }
 
       backlog.sort((a, b) => a.t - b.t);
-      send("backlog", backlog.slice(-220));
+      // the prelude goes in front of the window, not into it: its events are
+      // older than everything here and would be cut by the slice
+      send("backlog", pre.concat(backlog.slice(-220)));
       send("ready", { path: parentPath, agents: subs.length, size: parentSize });
 
       // --- live tail ---

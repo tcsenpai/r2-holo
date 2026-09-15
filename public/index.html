@@ -188,30 +188,6 @@
     background:rgba(5,14,24,.8);border:1px solid var(--line);
     padding:3px 8px;text-shadow:0 0 8px rgba(3,7,14,.95);white-space:nowrap;
   }
-  .station-card{
-    position:absolute;top:0;left:0;display:none;transform-origin:0 0;
-    width:250px;pointer-events:auto;
-    background:linear-gradient(180deg, rgba(7,19,32,.96), rgba(5,12,20,.96));
-    border:1px solid var(--line);border-bottom:2px solid var(--proj);
-    padding:11px 13px 12px;backdrop-filter:blur(3px);
-  }
-  .station-card h3{
-    margin:.3em 0 .5em;font-family:var(--f-disp);font-weight:600;
-    font-size:14px;letter-spacing:.02em;color:#eaf7ff;
-  }
-  .station-card .st-body{
-    margin:0 0 9px;font-size:11.5px;line-height:1.55;color:var(--steel);
-  }
-  .station-card .st-tools{
-    font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;
-    color:var(--proj);border-top:1px solid var(--line-soft);padding-top:8px;
-  }
-  #station-close{
-    float:right;margin:-3px -5px 0 8px;background:none;border:0;
-    color:var(--ink-mute);cursor:pointer;font-family:var(--f-mono);
-    font-size:12px;padding:4px 6px;
-  }
-  #station-close:hover{color:var(--proj);}
 
   /* ---------- readout ---------- */
   #readout{
@@ -222,6 +198,13 @@
     backdrop-filter:blur(3px);
   }
   #readout[data-kind="alert"]{border-left-color:var(--amber);}
+  #readout-close{
+    float:right;margin:-6px -8px 0 10px;background:none;border:0;
+    color:var(--ink-mute);cursor:pointer;font-family:var(--f-mono);
+    font-size:13px;padding:5px 7px;
+  }
+  #readout-close:hover{color:var(--proj);}
+  #readout .mute{color:var(--ink-mute);}
   #readout h2{margin:.3em 0 .5em;font-family:var(--f-disp);font-weight:600;font-size:17px;letter-spacing:.03em;color:#eaf7ff;}
   #readout p.note{margin:0 0 12px;font-size:12.5px;line-height:1.55;color:var(--steel);max-width:60ch;}
   #readout p.note span{font-family:var(--f-mono);font-size:11.5px;color:var(--proj);}
@@ -308,13 +291,6 @@
   <div id="agents"><div id="main-tag" class="agent-tag main"></div></div>
   <div id="stations">
     <div id="station-hint" class="station-hint"></div>
-    <div id="station-card" class="station-card">
-      <button id="station-close" aria-label="Close">&#10005;</button>
-      <div class="eyebrow st-kind"></div>
-      <h3 class="st-title"></h3>
-      <p class="st-body"></p>
-      <div class="st-tools"></div>
-    </div>
   </div>
   <div id="veil"></div>
   <div id="vignette"></div>
@@ -335,6 +311,7 @@
   <div id="ticker"></div>
 
   <div id="console">
+    <button class="btn" id="btn-panel" aria-pressed="true">Panel</button>
     <button class="btn" id="btn-shop" aria-pressed="true">Workshop</button>
     <button class="btn" id="btn-roam" aria-pressed="true">Patrol</button>
     <button class="btn" id="btn-spin" aria-pressed="true">Orbit</button>
@@ -363,6 +340,19 @@
         <li><b>LOC</b> locomotion &rarr; human turns and session activity</li>
       </ul>
       <p style="margin-top:12px">None of that is arbitrary: every module is a documented piece of R2-series equipment, assigned to the kind of work it resembles.</p>
+
+      <h3>Session signals</h3>
+      <p>The transcript carries far more than tool calls. These lines describe the run as a whole, so they map to the room rather than to a droid:</p>
+      <ul>
+        <li><b>bench tiles</b> &rarr; <span class="code">file-history-delta</span>: one tile per file the session has edited, brighter the more often it is touched. The only thing here that persists.</li>
+        <li><b>bay ledger</b> &rarr; <span class="code">cost-state</span>: spend, lines added against lines removed, model time against tool time, and the bill per model.</li>
+        <li><b>floor rings</b> &rarr; <span class="code">system/turn_duration</span>: one ring per closed turn, sized by how long it took, fading over about a minute.</li>
+        <li><b>block stack</b> &rarr; <span class="code">queue-operation</span>: the real depth of the message queue, growing on enqueue and burning down on dequeue.</li>
+        <li><b>amber perimeter</b> &rarr; <span class="code">permission-mode</span>: lit while the session runs under <span class="code">bypassPermissions</span> and is asking nobody.</li>
+        <li><b>beam colour</b> &rarr; cache-read against fresh input tokens: cyan while the context is being reused cheaply, amber as it is paid for again.</li>
+        <li><b>sonar ping</b> &rarr; model prose with no subagent behind it: the one event aimed outward, at you, so it gets the one outward gesture.</li>
+      </ul>
+      <p style="margin-top:12px">File paths are the only part of this that touches your filesystem, and they are sent home-relative and never read: the path, not the contents.</p>
 
       <h3>The fleet</h3>
       <p>Each live subagent gets its own droid, and the series comes from the model behind the event. Canon: the <b>R4</b> is identical to the R2 except its dome is conical rather than hemispherical, and the <b>R5</b> has a shorter cone head and was the cut-price, unreliable unit. So opus runs as an R2, sonnet as an R4, haiku as an R5. The size difference encodes the model tier &mdash; that part is a reading aid, not a canonical dimension.</p>
