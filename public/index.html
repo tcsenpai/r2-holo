@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>R2 Holotable</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500&display=swap">
+<style>
+  :root{
+    --void:#03070e;
+    --deck:#071320;
+    --proj:#5fe3ff;
+    --proj-dim:#2b7f96;
+    --steel:#8ba3b8;
+    --amber:#ffb454;
+    --good:#5ff0a8;      /* logic-display green: a clean result */
+    --bad:#ff5f6d;       /* logic-display red: a failed one */
+    --line:rgba(95,227,255,.22);
+    --line-soft:rgba(95,227,255,.10);
+    --ink:#cfe6f2;
+    --ink-mute:#6f8697;
+    --f-disp:"Chakra Petch","Segoe UI",system-ui,sans-serif;
+    --f-mono:"IBM Plex Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+    --f-body:"IBM Plex Sans",system-ui,sans-serif;
+  }
+  html,body{height:100%;}
+  body{
+    margin:0;background:var(--void);color:var(--ink);
+    font-family:var(--f-body);overflow:hidden;-webkit-font-smoothing:antialiased;
+  }
+  *{box-sizing:border-box;}
+
+  #app{
+    position:relative;height:100%;width:100%;overflow:hidden;
+    background:
+      radial-gradient(120% 90% at 50% 105%, rgba(43,127,150,.30) 0%, rgba(3,7,14,0) 62%),
+      radial-gradient(90% 70% at 50% 18%, rgba(11,32,48,.55) 0%, rgba(3,7,14,0) 70%),
+      var(--void);
+  }
+  #stage{position:absolute;inset:0;}
+  #stage canvas{display:block;width:100%;height:100%;touch-action:none;cursor:grab;}
+  #stage canvas:active{cursor:grabbing;}
+  #emitter{
+    position:absolute;left:50%;bottom:-120px;translate:-50% 0;
+    width:min(70vw,560px);height:230px;pointer-events:none;
+    background:radial-gradient(50% 50% at 50% 50%, rgba(95,227,255,.26), rgba(95,227,255,0) 70%);
+    filter:blur(6px);
+  }
+  #veil{
+    position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(to bottom, rgba(95,227,255,.045) 0 1px, rgba(0,0,0,0) 1px 3px);
+    mix-blend-mode:screen;opacity:.5;
+  }
+  #vignette{position:absolute;inset:0;pointer-events:none;box-shadow:inset 0 0 180px 40px rgba(3,7,14,.92);}
+  #alarm{
+    position:absolute;inset:0;pointer-events:none;opacity:0;
+    box-shadow:inset 0 0 160px 30px rgba(255,180,84,.55);
+    transition:opacity .12s ease-out;
+  }
+
+  .eyebrow{
+    font-family:var(--f-mono);font-size:10px;letter-spacing:.22em;
+    text-transform:uppercase;color:var(--proj-dim);
+  }
+
+  /* ---------- title and session picker ---------- */
+  #title{position:absolute;top:0;left:0;padding:18px 20px;max-width:min(92vw,560px);z-index:5;}
+  #title h1{
+    margin:.24em 0 .18em;font-family:var(--f-disp);font-weight:700;
+    font-size:clamp(22px,3.2vw,32px);letter-spacing:.02em;line-height:1;
+    color:#eaf7ff;text-shadow:0 0 18px rgba(95,227,255,.45);
+  }
+  #title .bar{width:52px;height:2px;margin-bottom:10px;background:linear-gradient(90deg,var(--proj),rgba(95,227,255,0));}
+  #picker{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px;}
+  select{
+    font-family:var(--f-mono);font-size:11px;color:var(--ink);
+    background:rgba(7,19,32,.92);border:1px solid var(--line);
+    padding:7px 10px;max-width:min(78vw,430px);border-radius:0;
+    appearance:none;cursor:pointer;
+  }
+  select:focus-visible{outline:1px solid var(--proj);outline-offset:1px;}
+  #link{display:flex;align-items:center;gap:7px;font-family:var(--f-mono);font-size:10px;letter-spacing:.12em;color:var(--ink-mute);}
+  #dot{width:7px;height:7px;border-radius:50%;background:#3f5568;transition:background .2s, box-shadow .2s;}
+  #link[data-on="1"] #dot{background:var(--good);box-shadow:0 0 9px var(--good);}
+  #link[data-on="err"] #dot{background:var(--bad);box-shadow:0 0 9px var(--bad);}
+
+  /* ---------- subsystem rail ---------- */
+  #rail{position:absolute;top:50%;left:20px;translate:0 -50%;display:flex;flex-direction:column;gap:2px;z-index:4;}
+  #rail .rail-h{margin-bottom:8px;}
+  .sysbtn{
+    display:flex;align-items:baseline;gap:10px;position:relative;
+    background:none;border:0;border-left:2px solid transparent;
+    padding:6px 10px;color:var(--ink-mute);cursor:pointer;text-align:left;
+    font-family:var(--f-mono);font-size:11px;letter-spacing:.1em;
+    transition:color .15s,border-color .15s,background .15s;
+  }
+  .sysbtn .tag{color:var(--proj-dim);width:2.6em;flex:none;transition:color .15s;}
+  .sysbtn .n{margin-left:auto;padding-left:14px;color:#3f5568;font-variant-numeric:tabular-nums;}
+  .sysbtn:hover{color:var(--ink);background:rgba(95,227,255,.05);}
+  .sysbtn[aria-selected="true"]{color:#eaf7ff;border-left-color:var(--proj);background:rgba(95,227,255,.08);}
+  .sysbtn[aria-selected="true"] .tag{color:var(--proj);}
+  .sysbtn:focus-visible{outline:1px solid var(--proj);outline-offset:1px;}
+  .sysbtn[data-fire="1"]{color:#eaf7ff;background:rgba(95,227,255,.16);}
+  .sysbtn[data-fire="1"] .tag{color:var(--proj);text-shadow:0 0 10px var(--proj);}
+  .sysbtn[data-kind="alert"][data-fire="1"]{background:rgba(255,180,84,.18);}
+  .sysbtn[data-kind="alert"][data-fire="1"] .tag{color:var(--amber);text-shadow:0 0 10px var(--amber);}
+  .sysbtn[data-kind="alert"][aria-selected="true"]{border-left-color:var(--amber);}
+  .sysbtn[data-kind="alert"][aria-selected="true"] .tag{color:var(--amber);}
+
+  /* ---------- hotspots ---------- */
+  #spots{position:absolute;inset:0;pointer-events:none;z-index:3;}
+  .spot{position:absolute;top:0;left:0;width:0;height:0;pointer-events:auto;}
+  .spot button{
+    position:absolute;translate:-50% -50%;width:24px;height:24px;padding:0;
+    background:none;border:1px solid var(--line);border-radius:50%;
+    cursor:pointer;display:grid;place-items:center;
+    transition:border-color .15s,background .15s,scale .15s;
+  }
+  .spot button::after{content:"";width:5px;height:5px;border-radius:50%;background:var(--proj-dim);transition:background .15s,box-shadow .15s;}
+  .spot button:hover{border-color:var(--proj);scale:1.12;}
+  .spot[data-on="1"] button{border-color:var(--proj);background:rgba(95,227,255,.14);}
+  .spot[data-on="1"] button::after{background:var(--proj);box-shadow:0 0 10px var(--proj);}
+  .spot[data-kind="alert"][data-on="1"] button{border-color:var(--amber);background:rgba(255,180,84,.14);}
+  .spot[data-kind="alert"][data-on="1"] button::after{background:var(--amber);box-shadow:0 0 10px var(--amber);}
+  .spot .lbl{
+    position:absolute;translate:18px -50%;white-space:nowrap;display:none;
+    font-family:var(--f-mono);font-size:10px;letter-spacing:.14em;
+    color:var(--proj);text-shadow:0 0 8px rgba(3,7,14,.9);pointer-events:none;
+  }
+  .spot button:hover ~ .lbl,.spot[data-on="1"] .lbl{display:block;}
+  .spot[data-kind="alert"][data-on="1"] .lbl{color:var(--amber);}
+
+  /* ---------- subagent droid tags ---------- */
+  #agents{position:absolute;inset:0;pointer-events:none;z-index:3;}
+  .agent-tag{
+    position:absolute;top:0;left:0;translate:-50% -100%;
+    display:flex;flex-direction:column;align-items:center;gap:1px;
+    font-family:var(--f-mono);letter-spacing:.1em;
+    text-shadow:0 0 8px rgba(3,7,14,.95);white-space:nowrap;
+    transition:opacity .2s;
+  }
+  .agent-tag .aser{
+    font-size:9px;letter-spacing:.2em;color:var(--proj-dim);
+    border:1px solid var(--line);padding:0 4px;
+  }
+  .agent-tag .aid{font-size:9.5px;color:var(--proj);opacity:.9;}
+  .agent-tag .atool{color:var(--ink-mute);font-size:9px;letter-spacing:.06em;}
+  .agent-tag .atype{color:#3f5568;font-size:8.5px;letter-spacing:.08em;}
+  .agent-tag[data-err="1"] .aid{color:var(--bad);}
+  .agent-tag[data-err="1"] .atool{color:#ffc9cd;}
+  .agent-tag[data-child="1"] .aser{border-color:rgba(95,240,168,.45);color:var(--good);}
+
+  /* ---------- readout ---------- */
+  #readout{
+    position:absolute;right:20px;top:50%;translate:0 -50%;width:min(34vw,340px);
+    background:linear-gradient(180deg, rgba(7,19,32,.90), rgba(5,12,20,.86));
+    border:1px solid var(--line);border-left:2px solid var(--proj);
+    padding:16px 18px 14px;z-index:4;max-height:min(72vh,560px);overflow:auto;
+    backdrop-filter:blur(3px);
+  }
+  #readout[data-kind="alert"]{border-left-color:var(--amber);}
+  #readout h2{margin:.3em 0 .5em;font-family:var(--f-disp);font-weight:600;font-size:17px;letter-spacing:.03em;color:#eaf7ff;}
+  #readout p.note{margin:0 0 12px;font-size:12.5px;line-height:1.55;color:var(--steel);max-width:60ch;}
+  #readout p.note span{font-family:var(--f-mono);font-size:11.5px;color:var(--proj);}
+  dl.specs{margin:0;display:grid;grid-template-columns:auto 1fr;gap:5px 14px;align-items:baseline;}
+  dl.specs dt{font-family:var(--f-mono);font-size:10px;letter-spacing:.11em;text-transform:uppercase;color:var(--ink-mute);white-space:nowrap;}
+  dl.specs dd{margin:0;font-family:var(--f-mono);font-size:12px;color:var(--ink);font-variant-numeric:tabular-nums;}
+  #readout[data-kind="alert"] dl.specs dd{color:#ffd9a6;}
+  .live-h{margin:14px 0 6px;padding-top:11px;border-top:1px solid var(--line-soft);}
+
+  /* ---------- event ticker ---------- */
+  #ticker{
+    position:absolute;left:20px;bottom:64px;width:min(38vw,330px);z-index:4;
+    display:flex;flex-direction:column-reverse;gap:3px;pointer-events:none;
+  }
+  .tick{
+    font-family:var(--f-mono);font-size:10.5px;letter-spacing:.05em;
+    display:flex;gap:9px;align-items:baseline;color:var(--ink-mute);
+    animation:tickin .25s ease-out;
+  }
+  @keyframes tickin{from{opacity:0;transform:translateX(-6px);}to{opacity:1;transform:none;}}
+  .tick .ts{color:#3f5568;flex:none;font-variant-numeric:tabular-nums;}
+  .tick .nm{color:var(--proj);}
+  .tick.ok .nm{color:var(--good);}
+  .tick.err .nm{color:var(--bad);}
+  .tick.dim{opacity:.45;}
+  .tick .sd{color:var(--proj-dim);}
+
+  /* ---------- console ---------- */
+  #console{
+    position:absolute;left:0;right:0;bottom:0;display:flex;flex-wrap:wrap;
+    align-items:center;gap:8px;padding:12px 20px;z-index:5;
+    background:linear-gradient(0deg, rgba(3,7,14,.92), rgba(3,7,14,0));
+  }
+  .btn{
+    font-family:var(--f-mono);font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;
+    color:var(--ink-mute);background:rgba(7,19,32,.72);border:1px solid var(--line);
+    padding:7px 12px;cursor:pointer;transition:color .15s,border-color .15s,background .15s;
+  }
+  .btn:hover{color:var(--ink);border-color:var(--proj-dim);}
+  .btn:focus-visible{outline:1px solid var(--proj);outline-offset:1px;}
+  .btn[aria-pressed="true"]{color:#03070e;background:var(--proj);border-color:var(--proj);}
+  #hint{margin-left:auto;font-family:var(--f-mono);font-size:10px;letter-spacing:.1em;color:#3f5568;}
+
+  /* ---------- modal ---------- */
+  #scrim{position:absolute;inset:0;z-index:7;display:none;background:rgba(3,7,14,.72);backdrop-filter:blur(2px);}
+  #scrim[data-open="1"]{display:grid;place-items:center;}
+  #info{
+    width:min(92vw,500px);max-height:82vh;overflow:auto;
+    background:linear-gradient(180deg, rgba(7,19,32,.97), rgba(5,12,20,.97));
+    border:1px solid var(--line);border-top:2px solid var(--proj);padding:18px 20px 20px;
+  }
+  #info h2{margin:.35em 0 .7em;font-family:var(--f-disp);font-weight:600;font-size:16px;color:#eaf7ff;}
+  #info h3{margin:16px 0 6px;font-family:var(--f-mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--proj-dim);}
+  #info p{margin:0 0 12px;font-size:12.5px;line-height:1.6;color:var(--steel);max-width:62ch;}
+  #info ul{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:6px;}
+  #info li{font-family:var(--f-mono);font-size:11px;line-height:1.5;padding-left:14px;position:relative;color:var(--ink-mute);}
+  #info li::before{content:"";position:absolute;left:0;top:.55em;width:5px;height:1px;background:var(--proj-dim);}
+  #info li b{color:var(--proj);font-weight:500;}
+  #info a{color:var(--proj);text-decoration:none;border-bottom:1px solid rgba(95,227,255,.3);}
+  #info .code{font-family:var(--f-mono);font-size:11.5px;color:var(--proj);}
+  #info .foot{margin:16px 0 0;padding-top:12px;border-top:1px solid var(--line-soft);font-family:var(--f-mono);font-size:9.5px;line-height:1.6;color:#3f5568;}
+  #info-close{float:right;margin:-4px -6px 0 12px;background:none;border:0;color:var(--ink-mute);cursor:pointer;font-family:var(--f-mono);font-size:14px;padding:6px 8px;}
+  #info-close:hover{color:var(--proj);}
+
+  @media (max-width:980px){
+    #rail{top:auto;bottom:112px;left:0;right:0;translate:0 0;flex-direction:row;overflow-x:auto;gap:0;padding:0 16px;}
+    #rail .rail-h{display:none;}
+    .sysbtn{border-left:0;border-bottom:2px solid transparent;flex:none;}
+    .sysbtn[aria-selected="true"]{border-left-color:transparent;border-bottom-color:var(--proj);}
+    .sysbtn .name,.sysbtn .n{display:none;}
+    .sysbtn .tag{width:auto;}
+    #readout{right:0;left:0;top:auto;bottom:0;translate:0 0;width:auto;border:0;border-top:2px solid var(--proj);max-height:40vh;padding-bottom:112px;}
+    #ticker{display:none;}
+    #hint{display:none;}
+  }
+  @media (prefers-reduced-motion:reduce){ #veil{display:none;} }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage"></div>
+  <div id="emitter"></div>
+  <div id="spots"></div>
+  <div id="agents"></div>
+  <div id="veil"></div>
+  <div id="vignette"></div>
+  <div id="alarm"></div>
+
+  <header id="title">
+    <div class="eyebrow">Industrial Automaton &middot; Diagnostic holotable</div>
+    <h1>R2-D2</h1>
+    <div class="bar"></div>
+    <div id="picker">
+      <select id="sessions" aria-label="Claude Code session"><option>loading&hellip;</option></select>
+      <span id="link" data-on="0"><span id="dot"></span><span id="linktext">disconnected</span></span>
+    </div>
+  </header>
+
+  <nav id="rail" role="tablist" aria-label="Subsystems"></nav>
+  <section id="readout" role="tabpanel" aria-live="polite"></section>
+  <div id="ticker"></div>
+
+  <div id="console">
+    <button class="btn" id="btn-shop" aria-pressed="true">Workshop</button>
+    <button class="btn" id="btn-spin" aria-pressed="true">Orbit</button>
+    <button class="btn" id="btn-scan" aria-pressed="true">Scan</button>
+    <button class="btn" id="btn-reset">Reset view</button>
+    <button class="btn" id="btn-info" aria-haspopup="dialog">Info</button>
+    <div id="hint">Drag to orbit &middot; scroll to zoom</div>
+  </div>
+
+  <div id="scrim" data-open="0">
+    <div id="info" role="dialog" aria-modal="true" aria-labelledby="info-title">
+      <button id="info-close" aria-label="Close">&#10005;</button>
+      <div class="eyebrow">Projection notes</div>
+      <h2 id="info-title">How R2 reads Claude Code</h2>
+      <p>The local server tails the session transcript in <span class="code">~/.claude/projects</span> and extracts only the shape of each event: which tool was called, whether the result was an error, which subagent it came from. The session content never leaves your disk and is never sent to the page.</p>
+
+      <h3>Module mapping</h3>
+      <ul>
+        <li><b>SNS</b> video sensor &rarr; Read, Grep, Glob, LS</li>
+        <li><b>SCP</b> scomp link arm &rarr; Bash and shell</li>
+        <li><b>MAN</b> fine manipulator &rarr; Write, Edit, MultiEdit</li>
+        <li><b>TRX</b> transceiver &rarr; WebSearch, WebFetch, MCP tools</li>
+        <li><b>VCK</b> VicksVisc projector &rarr; Task and subagent lines</li>
+        <li><b>EXT</b> fire extinguisher &rarr; tool_result with is_error</li>
+        <li><b>INT</b> Intellex IV &rarr; model prose and token count</li>
+        <li><b>LOC</b> locomotion &rarr; human turns and session activity</li>
+      </ul>
+      <p style="margin-top:12px">None of that is arbitrary: every module is a documented piece of R2-series equipment, assigned to the kind of work it resembles.</p>
+
+      <h3>The fleet</h3>
+      <p>Each live subagent gets its own droid, and the series comes from the model behind the event. Canon: the <b>R4</b> is identical to the R2 except its dome is conical rather than hemispherical, and the <b>R5</b> has a shorter cone head and was the cut-price, unreliable unit. So opus runs as an R2, sonnet as an R4, haiku as an R5. The size difference encodes the model tier &mdash; that part is a reading aid, not a canonical dimension.</p>
+
+      <h3>Nesting is inferred, not read</h3>
+      <p>The transcript gives each subagent an <span class="code">agentId</span> and an <span class="code">attributionAgent</span>, but the latter is the agent <em>type</em> (general-purpose, fork) &mdash; there is no parent id anywhere in the format. So when a subagent calls <span class="code">Task</span> and a new agent file appears shortly after, this page attaches the new droid to that one as a child and tethers it there. It is a heuristic based on timing, and it is labelled as such rather than presented as fact.</p>
+
+      <h3>Colour channels</h3>
+      <ul>
+        <li><b>cyan</b> &mdash; the projection itself</li>
+        <li><b>green</b> &mdash; logic-display blip, a clean tool_result</li>
+        <li><b>red</b> &mdash; logic-display blip, a failed one</li>
+        <li><b>amber</b> &mdash; whole-body alarm, the extinguisher firing</li>
+      </ul>
+
+      <h3>Sources</h3>
+      <ul>
+        <li><a href="https://starwars.fandom.com/wiki/R2-series_astromech_droid" target="_blank" rel="noopener">Wookieepedia &mdash; R2-series astromech droid</a></li>
+        <li><a href="https://starwars.fandom.com/wiki/R2-D2" target="_blank" rel="noopener">Wookieepedia &mdash; R2-D2</a></li>
+        <li><a href="https://starwars.fandom.com/wiki/R4_astromech_droid" target="_blank" rel="noopener">Wookieepedia &mdash; R4 astromech droid</a></li>
+        <li><a href="https://starwars.fandom.com/wiki/R5_series_astromech_droid" target="_blank" rel="noopener">Wookieepedia &mdash; R5-series astromech droid</a></li>
+      </ul>
+      <p class="foot">The geometry is a procedural reconstruction from published specifications and the known silhouette, not a scale survey. Star Wars and its droids are the property of Lucasfilm Ltd.</p>
+    </div>
+  </div>
+</div>
+
+<script src="three.min.js"></script>
+<script src="holotable.js"></script>
+</body>
+</html>
