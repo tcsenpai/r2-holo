@@ -509,6 +509,9 @@
     }
     var blipGood = blipMesh(dome, GOOD, [ 0.31, eyeY-0.03, eyeZ*0.90], 0.055);
     var blipBad  = blipMesh(dome, BAD,  [-0.31, eyeY-0.03, eyeZ*0.90], 0.055);
+    // Waiting on the model is a state of the machine, not a caption: it gets
+    // a physical amber lamp on the hull rather than a label in the air.
+    var waitLed = blipMesh(squash, 0xffb454, [0, 1.62, 0.952], 0.085);
     var logic = [];
     for(var li=0; li<4; li++){
       logic.push(blipMesh(squash, li%2 ? GOOD : BAD,
@@ -618,6 +621,7 @@
       group:g, squash:squash, mats:M, dome:dome, eyeMat:eyeMat,
       antennas:antennas, scomp:scomp, scompArm:scompArm, manip:manip,
       blipGood:blipGood, blipBad:blipBad, logic:logic, good:0, bad:0,
+      waitLed:waitLed, wait:0,
       centerLeg:centerLeg, feet:FEET, beam:beam, beamMat:beamMat, topY:topY,
       sparkPos:sparkPos, sparkVel:sparkVel, sparkLife:sparkLife,
       sparkGeo:sparkGeo, sparkMat:sparkMat, SPARK_N:SPARK_N,
@@ -681,6 +685,8 @@
     r2.bad  = Math.max(0, r2.bad  - dt*2.2);
     r2.blipGood.opacity = 0.07 + r2.good*0.9;
     r2.blipBad.opacity  = 0.07 + r2.bad*0.9;
+    // slow amber breathing while the model is thinking
+    r2.waitLed.opacity = 0.03 + r2.wait * (0.30 + 0.34*(0.5+0.5*Math.sin(t*3.1)));
     for(var bi=0; bi<r2.logic.length; bi++){
       var chase = Math.max(0, Math.sin(t*2.6 - bi*0.9));
       r2.logic[bi].opacity = 0.04 + chase*0.10 +
@@ -904,8 +910,9 @@
 
     var el = document.createElement("div");
     el.className = "agent-tag";
-    el.innerHTML = '<span class="aser">R2</span><span class="aid">'+id+'</span>'+
-                   '<span class="atool">—</span><span class="atype"></span>';
+    el.innerHTML = '<span class="head"><span class="aser">R2</span>'+
+                   '<span class="aid">'+id+'</span><span class="atype"></span></span>'+
+                   '<span class="what">—</span><span class="secs"></span>';
     if(parentId) el.dataset.child = "1";
     agentsLayer.appendChild(el);
 
@@ -1346,12 +1353,20 @@
   var mainTag=document.getElementById("main-tag");
   var lastTagKey="";
   function setMainTag(st){
+    // The callout only speaks when the droid is actually doing something.
+    // Waiting is the hull lamp's job; idle needs no caption at all.
+    if(st.mode !== "run"){
+      if(lastTagKey !== "off"){ lastTagKey = "off"; mainTag.dataset.off = "1"; }
+      return;
+    }
     var key = st.mode+"|"+st.label+"|"+st.secs;
     if(key === lastTagKey) return;              // only touch the DOM on change
     lastTagKey = key;
+    mainTag.dataset.off = "0";
     mainTag.dataset.mode = st.mode;
     mainTag.innerHTML =
-      '<span class="head">'+st.head+'</span>'+
+      '<span class="head"><span class="aser">R2</span>'+
+      '<span class="aid">primary</span></span>'+
       '<span class="what">'+(st.label||"—")+'</span>'+
       (st.secs > 1 ? '<span class="secs">'+st.secs+'s</span>' : '');
   }
@@ -1359,7 +1374,7 @@
   var tmp=new THREE.Vector3();
   function updateSpots(w,h){
     tmp.set(0, 5.2, 0); droid.localToWorld(tmp); tmp.project(camera);
-    if(tmp.z>1){ mainTag.style.display="none"; }
+    if(tmp.z>1 || mainTag.dataset.off === "1"){ mainTag.style.display="none"; }
     else {
       mainTag.style.display="flex";
       mainTag.style.transform="translate("+((tmp.x*0.5+0.5)*w).toFixed(1)+"px,"+((-tmp.y*0.5+0.5)*h).toFixed(1)+"px)";
@@ -1465,7 +1480,7 @@
       }
       if(ev.kind==="tool"){
         A.el.dataset.err="0";
-        A.el.querySelector(".atool").textContent = ev.tool;
+        A.el.querySelector(".what").textContent = ev.tool;
         if(!silent && moduleFor(ev.tool)==="trx")
           shock(A.wrap.position.x, 1.2, A.wrap.position.z, 0.2, 1.8, 0.9, false);
         A.r2.good = Math.max(A.r2.good, 0.5);
@@ -1734,6 +1749,7 @@
       : waiting
       ? { head:"WAITING ON MODEL", label:live.lastTool, secs:Math.round(sinceLast/1000), mode:"wait" }
       : { head:"IDLE", label:live.lastTool, secs:0, mode:"idle" };
+    MAIN.wait = damp(MAIN.wait, waiting ? 1 : 0, 6, dt);
     setMainTag(status);
 
     var ex = animateDroid(MAIN, MOD, t, dt, idle);
@@ -1785,11 +1801,20 @@
       var A=AGENTS[ids[ai]];
       MODKEYS.forEach(function(k){ A.mod[k].p *= decay; });
       var aFlight = applyPending(A.pend, A.mod);
-      var aIdle = !aFlight && (nowMs - A.lastAt) > 15000;
-      if(aFlight){
-        var secs = Math.round((nowMs - aFlight.at)/1000);
-        A.el.querySelector(".atool").textContent =
-          aFlight.tool + (secs > 2 ? "  " + secs + "s" : "");
+      var aSince = nowMs - A.lastAt;
+      var aWait = !aFlight && aSince < WAIT_WINDOW;
+      var aIdle = !aFlight && !aWait;
+      A.r2.wait = damp(A.r2.wait, aWait ? 1 : 0, 6, dt);
+
+      var aMode = aFlight ? "run" : (aWait ? "wait" : "idle");
+      var aSecs = aFlight ? Math.round((nowMs - aFlight.at)/1000)
+                          : Math.round(aSince/1000);
+      var aKey = aMode + "|" + (aFlight ? aFlight.tool : "") + "|" + aSecs;
+      if(aKey !== A.tagKey){
+        A.tagKey = aKey;
+        A.el.dataset.mode = aMode;
+        if(aFlight) A.el.querySelector(".what").textContent = aFlight.tool;
+        A.el.querySelector(".secs").textContent = aSecs > 1 ? aSecs + "s" : "";
       }
       animateDroid(A.r2, A.mod, t, dt, aIdle);
       A.r2.group.position.set(A.r2.shake.x, 0, A.r2.shake.z);

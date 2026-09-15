@@ -134,40 +134,47 @@
 
   /* ---------- subagent droid tags ---------- */
   #agents{position:absolute;inset:0;pointer-events:none;z-index:3;}
+  /* One callout shape for every droid, primary and subagent alike. */
   .agent-tag{
     position:absolute;top:0;left:0;translate:-50% -100%;
     display:flex;flex-direction:column;align-items:center;gap:1px;
     font-family:var(--f-mono);letter-spacing:.1em;
     text-shadow:0 0 8px rgba(3,7,14,.95);white-space:nowrap;
-    transition:opacity .2s;
-  }
-  .agent-tag .aser{
-    font-size:9px;letter-spacing:.2em;color:var(--proj-dim);
-    border:1px solid var(--line);padding:0 4px;
-  }
-  .agent-tag .aid{font-size:9.5px;color:var(--proj);opacity:.9;}
-  .agent-tag .atool{color:var(--ink-mute);font-size:9px;letter-spacing:.06em;}
-  .agent-tag .atype{color:#3f5568;font-size:8.5px;letter-spacing:.08em;}
-  .agent-tag[data-err="1"] .aid{color:var(--bad);}
-  .agent-tag[data-err="1"] .atool{color:#ffc9cd;}
-  .agent-tag[data-child="1"] .aser{border-color:rgba(95,240,168,.45);color:var(--good);}
-
-  /* the primary droid gets a proper callout, not just a label */
-  .agent-tag.main{
     background:rgba(5,14,24,.82);border:1px solid var(--line);
-    border-bottom:2px solid var(--proj);padding:5px 10px 6px;gap:2px;
-    backdrop-filter:blur(2px);
+    border-bottom:2px solid var(--proj);padding:4px 9px 5px;
+    backdrop-filter:blur(2px);transition:opacity .2s;
   }
-  .agent-tag.main .head{
-    font-size:8.5px;letter-spacing:.2em;color:var(--proj-dim);
+  .agent-tag .head{
+    font-size:8.5px;letter-spacing:.18em;color:var(--proj-dim);
+    display:flex;align-items:center;gap:5px;
   }
-  .agent-tag.main .what{font-size:12px;color:#eaf7ff;letter-spacing:.06em;}
-  .agent-tag.main .secs{font-size:9px;color:var(--ink-mute);}
-  .agent-tag.main[data-mode="run"]{border-bottom-color:var(--good);}
-  .agent-tag.main[data-mode="run"] .head{color:var(--good);}
-  .agent-tag.main[data-mode="wait"]{border-bottom-color:var(--amber);}
-  .agent-tag.main[data-mode="wait"] .head{color:var(--amber);}
-  .agent-tag.main[data-mode="idle"]{opacity:.55;}
+  .agent-tag .aser{color:var(--proj);letter-spacing:.2em;}
+  .agent-tag .aid{color:var(--steel);}
+  .agent-tag .atype{color:#3f5568;}
+  .agent-tag .what{font-size:11.5px;color:#eaf7ff;letter-spacing:.06em;}
+  .agent-tag .secs{font-size:9px;color:var(--ink-mute);}
+
+  .agent-tag[data-mode="run"]{border-bottom-color:var(--good);}
+  .agent-tag[data-mode="run"] .head{color:var(--good);}
+  .agent-tag[data-mode="wait"]{border-bottom-color:var(--amber);}
+  .agent-tag[data-mode="wait"] .head{color:var(--amber);}
+  .agent-tag[data-mode="idle"]{opacity:.5;}
+  .agent-tag[data-err="1"]{border-bottom-color:var(--bad);}
+  .agent-tag[data-err="1"] .what{color:#ffc9cd;}
+  .agent-tag[data-child="1"] .aser{color:var(--good);}
+
+  /* a short leader tick, so a callout is never read as belonging to the
+     droid it happens to float in front of */
+  .agent-tag::after{
+    content:"";position:absolute;top:100%;left:50%;
+    width:1px;height:12px;translate:-50% 0;
+    background:linear-gradient(180deg,var(--proj),rgba(95,227,255,0));
+  }
+  .agent-tag[data-mode="run"]::after{background:linear-gradient(180deg,var(--good),rgba(95,240,168,0));}
+  .agent-tag[data-mode="wait"]::after{background:linear-gradient(180deg,var(--amber),rgba(255,180,84,0));}
+
+  .agent-tag.main{padding:5px 11px 6px;}
+  .agent-tag.main .what{font-size:13px;}
 
   /* ---------- readout ---------- */
   #readout{
