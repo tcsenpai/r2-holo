@@ -186,6 +186,8 @@ type Ev = {
   error?: boolean;
   label?: string;
   sidechain?: boolean;
+  id?: string;         // tool_use id, so a call can be paired with its result
+  forId?: string;      // tool_use_id carried by the matching tool_result
   agent?: string;      // short agent id, from the filename
   atype?: string;      // agent type: general-purpose, fork, ...
   model?: string;
@@ -215,6 +217,7 @@ function normalize(line: string, agent?: string): Ev[] {
       if (b?.type === "tool_use") {
         evs.push(tag({
           t, kind: "tool", tool: String(b.name ?? "?"),
+          id: b.id ? String(b.id) : undefined,
           sidechain: side, model: o.message?.model, tokens,
         }));
       } else if (b?.type === "text" && String(b.text ?? "").trim()) {
@@ -228,7 +231,11 @@ function normalize(line: string, agent?: string): Ev[] {
       for (const b of blocks) {
         if (b?.type === "tool_result") {
           sawResult = true;
-          evs.push(tag({ t, kind: "result", error: !!b.is_error, sidechain: side }));
+          evs.push(tag({
+            t, kind: "result", error: !!b.is_error,
+            forId: b.tool_use_id ? String(b.tool_use_id) : undefined,
+            sidechain: side,
+          }));
         }
       }
       if (!sawResult) evs.push(tag({ t, kind: "user", sidechain: side }));

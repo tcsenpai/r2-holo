@@ -141,6 +141,41 @@
     events:0, lastAt:0, sidechains:0
   };
 
+  /* A session is bursty by nature: a tool fires, then nothing happens for
+     thirty seconds while the command runs or the model thinks. Decaying to
+     idle after two seconds makes that look like a dead scene. So calls in
+     flight are tracked, and the droid holds its working pose for as long as
+     the call actually lasts — which is the truth, not filler. */
+  var mainPend = {};
+  var pendSeq = 0;
+  var PEND_MAX = 300000;      // give up on an unmatched call after 5 min
+  var WAIT_WINDOW = 90000;    // after this, the session is genuinely idle
+
+  function pendStart(pend, ev){
+    pend[ev.id || ("k"+(pendSeq++))] = { tool: ev.tool, at: Date.now() };
+  }
+  function pendEnd(pend, ev){
+    if(ev.forId && pend[ev.forId]){ delete pend[ev.forId]; return; }
+    var oldest=null, key=null;               // no id: close the oldest call
+    Object.keys(pend).forEach(function(k){
+      if(!oldest || pend[k].at < oldest.at){ oldest=pend[k]; key=k; }
+    });
+    if(key) delete pend[key];
+  }
+  /* Holds the matching module up while a call is open, and reports the
+     longest-running one so the UI can show what everyone is waiting for. */
+  function applyPending(pend, m){
+    var now=Date.now(), oldest=null;
+    Object.keys(pend).forEach(function(k){
+      var P=pend[k];
+      if(now - P.at > PEND_MAX){ delete pend[k]; return; }
+      var id=moduleFor(P.tool);
+      if(m[id].p < 0.62) m[id].p = 0.62;
+      if(!oldest || P.at < oldest.at) oldest=P;
+    });
+    return oldest;
+  }
+
   function moduleFor(tool){
     if(!tool) return "int";
     if(/^(Read|Grep|Glob|LS|NotebookRead|TodoRead)$/.test(tool)) return "sns";
@@ -828,7 +863,7 @@
 
     var A = { id:id, wrap:wrap, r2:null, mod:newMod(), lastAt:evTime||Date.now(),
               slot:slot, el:el, dying:false, t:0, clipT:0, kids:0,
-              parent:parentId, series:null, targetScale:0.42 };
+              parent:parentId, series:null, targetScale:0.42, pend:{} };
     AGENTS[id] = A;
     buildAgentBody(A, seriesFor(model));
     markShared();
@@ -1031,23 +1066,109 @@
     workshop.add(screen);
     addBox(screen, 0.2, 2.2, 0.2, [0, 1.1, 0], 0, wFaint);
     addBox(screen, 2.6, 1.6, 0.1, [0, 3.0, 0]);
-    (function(){
-      var pts=[];
-      for(var i=0;i<7;i++){
-        var y = 2.4 + i*0.2;
-        pts.push(-1.15, y, 0.06,  1.15 - (i%3)*0.5, y, 0.06);
+    // The screen is a real canvas: the last tool in plain type over a
+    // glyph rain whose speed tracks how busy the session is.
+    var monitor = (function(){
+      var cv = document.createElement("canvas");
+      cv.width = 512; cv.height = 320;
+      var ctx = cv.getContext("2d");
+      ctx.fillStyle = "#000"; ctx.fillRect(0,0,cv.width,cv.height);
+
+      var GLYPHS = "\u30a2\u30ab\u30b5\u30bf\u30ca\u30cf\u30de\u30e4\u30e9\u30ef" +
+                   "0123456789<>[]{}/\\|=+*#";
+      var COLW = 18, COLS = Math.floor(cv.width/COLW);
+      var col = [];
+      for(var i=0;i<COLS;i++){
+        col.push({ y: Math.random()*cv.height, sp: 40 + Math.random()*90 });
       }
-      var g=new THREE.BufferGeometry();
-      g.setAttribute("position",new THREE.Float32BufferAttribute(pts,3));
-      screen.add(new THREE.LineSegments(g, wWarm));
+
+      var tex = new THREE.CanvasTexture(cv);
+      tex.minFilter = THREE.LinearFilter;
+      var mat = new THREE.MeshBasicMaterial({
+        map:tex, transparent:true, opacity:0.9,
+        blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide
+      });
+      var mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.46, 1.48), mat);
+      mesh.position.set(0, 3.0, 0.07);
+      screen.add(mesh);
+
+      var acc = 0;
+      function draw(dt, st, busy, events, errors){
+        // trailing fade — ordinary 2D compositing inside the canvas, even
+        // though the texture itself is blended additively in the scene
+        ctx.fillStyle = "rgba(0,0,0,0.26)";
+        ctx.fillRect(0,0,cv.width,cv.height);
+
+        ctx.font = "15px ui-monospace, Menlo, monospace";
+        ctx.textAlign = "left";
+        for(var c=0;c<COLS;c++){
+          var C = col[c];
+          C.y += C.sp * (0.5 + busy*1.8) * dt;
+          if(C.y > cv.height + 40){ C.y = -20; C.sp = 40 + Math.random()*90; }
+          var ch = GLYPHS[(Math.random()*GLYPHS.length)|0];
+          ctx.fillStyle = "rgba(160,250,255,0.95)";          // bright head
+          ctx.fillText(ch, c*COLW + 3, C.y);
+          ctx.fillStyle = "rgba(60,170,200,0.45)";           // dimmer trail
+          ctx.fillText(GLYPHS[(Math.random()*GLYPHS.length)|0], c*COLW + 3, C.y - 19);
+        }
+
+        // readout panel on top, redrawn every frame so it never fades
+        ctx.fillStyle = "rgba(0,0,0,0.72)";
+        ctx.fillRect(0, 96, cv.width, 108);
+        ctx.strokeStyle = "rgba(95,227,255,0.55)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(1, 97, cv.width-2, 106);
+
+        ctx.fillStyle = st.mode === "run" ? "rgba(95,240,168,0.9)"
+                      : st.mode === "wait" ? "rgba(255,180,84,0.9)"
+                      : "rgba(95,227,255,0.7)";
+        ctx.font = "13px ui-monospace, Menlo, monospace";
+        ctx.fillText(st.head, 16, 122);
+        if(st.secs > 0){
+          ctx.textAlign = "right";
+          ctx.fillText(st.secs + "s", cv.width-16, 122);
+          ctx.textAlign = "left";
+        }
+
+        ctx.fillStyle = "#eaf7ff";
+        ctx.font = "bold 38px ui-monospace, Menlo, monospace";
+        var t = String(st.label || "—");
+        if(t.length > 17) t = t.slice(0,16) + "\u2026";
+        ctx.fillText(t, 16, 168);
+
+        ctx.fillStyle = "rgba(139,163,184,0.8)";
+        ctx.font = "13px ui-monospace, Menlo, monospace";
+        ctx.fillText("EV " + events, 16, 194);
+        ctx.fillStyle = errors > 0 ? "rgba(255,95,109,0.9)" : "rgba(95,240,168,0.8)";
+        ctx.fillText("ERR " + errors, 110, 194);
+
+        tex.needsUpdate = true;
+      }
+
+      return {
+        tick: function(dt, st, busy, events, errors){
+          acc += dt;
+          if(acc < 0.055) return;      // ~18 fps is plenty for a prop
+          draw(Math.min(0.12, acc), st, busy, events, errors);
+          acc = 0;
+        }
+      };
     })();
 
-    workshop.userData = { trolley:trolley, hook:hook };
+    workshop.userData = { trolley:trolley, hook:hook, monitor:monitor };
   })();
 
   /* ===================================================================
      6. ORBIT CONTROLS
      =================================================================== */
+  /* R2 does not stand still while it works: it rolls around the bay,
+     turns to face where it is going and banks into the corners. */
+  var roam = {
+    pos:new THREE.Vector3(), target:new THREE.Vector3(),
+    heading:0, bank:0, next:0, speed:0
+  };
+  var roamOn = !reduce;
+
   var cam = {theta:0.62, phi:1.18, radius:15.5, target:new THREE.Vector3(0,1.9,0)};
   var HOME = {theta:0.62, phi:1.18, radius:15.5};
   var autoSpin = !reduce;
@@ -1287,9 +1408,13 @@
           A.r2.good = 1;
         }
       }
+      if(ev.kind==="tool") pendStart(A.pend, ev);
+      else if(ev.kind==="result") pendEnd(A.pend, ev);
       route(ev, A.mod, A.r2);
       bump(MOD,"vck",0.10);
     } else {
+      if(ev.kind==="tool") pendStart(mainPend, ev);
+      else if(ev.kind==="result") pendEnd(mainPend, ev);
       if(ev.kind==="result"){ if(ev.error) MAIN.bad = 1; else MAIN.good = 1; }
       var rid = route(ev, MOD, MAIN);
       if(!silent){
@@ -1377,6 +1502,8 @@
     if(es){ es.close(); es=null; }
     clearTimeout(retry);
     resetAll();
+    QUEUE.length = 0; qAcc = 0;
+    mainPend = {};
     setLink("0","connecting…");
 
     es=new EventSource("/api/stream?path="+encodeURIComponent(path));
@@ -1403,8 +1530,8 @@
     });
     es.addEventListener("ready", function(){ setLink("1","listening"); });
     es.addEventListener("events", function(e){
-      JSON.parse(e.data).forEach(function(ev){ handle(ev, false); });
-      renderReadout();
+      // queued, not fired: the loop paces them out
+      QUEUE.push.apply(QUEUE, JSON.parse(e.data));
     });
     es.addEventListener("beat", function(){});
     es.onerror=function(){
@@ -1429,6 +1556,7 @@
   /* ===================================================================
      11. CONSOLE
      =================================================================== */
+  var btnRoam=document.getElementById("btn-roam");
   var btnShop=document.getElementById("btn-shop");
   var btnSpin=document.getElementById("btn-spin");
   var btnScan=document.getElementById("btn-scan");
@@ -1436,6 +1564,9 @@
   var btnInfo=document.getElementById("btn-info");
   var scrim=document.getElementById("scrim");
   var alarmEl=document.getElementById("alarm");
+
+  function syncRoam(){ btnRoam.setAttribute("aria-pressed", roamOn?"true":"false"); }
+  btnRoam.addEventListener("click",function(){ roamOn=!roamOn; syncRoam(); });
 
   var shopOn = true;
   function syncShop(){
@@ -1481,11 +1612,28 @@
   var size=resize();
   window.addEventListener("resize",function(){ size=resize(); });
 
-  applyCamera(); select(SYSTEMS[0].id); syncShop(); syncSpin(); syncScan();
+  applyCamera(); select(SYSTEMS[0].id); syncRoam(); syncShop(); syncSpin(); syncScan();
   markShared();
 
   var clock=new THREE.Clock();
   var beamTarget=new THREE.Vector3(), tmpVec=new THREE.Vector3();
+
+  /* The poll delivers a batch every 1.2 s, so firing them all on one frame
+     produces a spike followed by dead air. Spreading the batch across the
+     interval turns it back into a sequence you can actually read. */
+  var QUEUE=[], qAcc=0;
+  function drainQueue(dt){
+    if(!QUEUE.length) return;
+    qAcc += dt;
+    var step = clamp(1.1/QUEUE.length, 0.06, 0.30);
+    var guard = 0;
+    while(QUEUE.length && qAcc >= step && guard++ < 24){
+      handle(QUEUE.shift(), false);
+      qAcc -= step;
+      step = clamp(1.1/Math.max(1,QUEUE.length), 0.06, 0.30);
+    }
+    renderReadout();
+  }
 
   function frame(){
     requestAnimationFrame(frame);
@@ -1497,14 +1645,61 @@
     var nowMs=Date.now();
     uniforms.uTime.value=t;
 
-    if(autoSpin){ cam.theta += 0.10*dt; applyCamera(); }
+    if(autoSpin){ cam.theta += 0.10*dt; }
 
-    var idle = !live.lastAt || (nowMs - live.lastAt) > 20000;
+    drainQueue(dt);
+
     var decay = Math.exp(-1.9*dt);
     MODKEYS.forEach(function(k){ MOD[k].p *= decay; });
 
+    /* Three states, and only one of them is actually "nothing happening":
+       a call in flight, a wait on the model, or a truly idle session. */
+    var inflight = applyPending(mainPend, MOD);
+    var sinceLast = nowMs - (live.lastAt || 0);
+    var waiting = !inflight && live.lastAt && sinceLast < WAIT_WINDOW;
+    if(waiting) MOD.int.p = Math.max(MOD.int.p, 0.20);
+    var idle = !inflight && !waiting;
+
     var ex = animateDroid(MAIN, MOD, t, dt, idle);
-    droid.position.set(MAIN.shake.x, 0, MAIN.shake.z);
+
+    /* --- patrol: pick a spot, roll to it, park in the middle when idle --- */
+    if(roamOn && !idle){
+      roam.next -= dt;
+      if(roam.next <= 0){
+        var ra = Math.random()*Math.PI*2, rr = 0.9 + Math.random()*2.5;
+        roam.target.set(Math.cos(ra)*rr, 0, Math.sin(ra)*rr);
+        roam.next = 6 + Math.random()*9;
+      }
+    } else {
+      roam.target.set(0,0,0);
+    }
+    var pX = roam.pos.x, pZ = roam.pos.z;
+    roam.pos.x = damp(roam.pos.x, roam.target.x, 0.85, dt);
+    roam.pos.z = damp(roam.pos.z, roam.target.z, 0.85, dt);
+    var vx = (roam.pos.x - pX)/Math.max(dt,1e-4);
+    var vz = (roam.pos.z - pZ)/Math.max(dt,1e-4);
+    roam.speed = Math.sqrt(vx*vx + vz*vz);
+    var turn = 0;
+    if(roam.speed > 0.06){
+      var want = Math.atan2(vx, vz);
+      turn = ((want - roam.heading + Math.PI*3) % (Math.PI*2)) - Math.PI;
+      roam.heading += turn * (1 - Math.exp(-5*dt));
+    }
+    roam.bank = damp(roam.bank, clamp(-turn*1.6, -0.12, 0.12), 6, dt);
+
+    droid.position.set(
+      roam.pos.x + MAIN.shake.x,
+      Math.abs(Math.sin(t*7)) * 0.018 * Math.min(1, roam.speed),
+      roam.pos.z + MAIN.shake.z
+    );
+    droid.rotation.y = roam.heading;
+    droid.rotation.z = roam.bank;
+
+    // keep him loosely framed instead of letting him wander out of shot
+    cam.target.x = damp(cam.target.x, roam.pos.x*0.65, 1.6, dt);
+    cam.target.z = damp(cam.target.z, roam.pos.z*0.65, 1.6, dt);
+    applyCamera();
+
     alarmEl.style.opacity = (ex*0.45).toFixed(3);
 
     /* --- subagent droids --- */
@@ -1513,7 +1708,13 @@
     for(var ai=0; ai<ids.length; ai++){
       var A=AGENTS[ids[ai]];
       MODKEYS.forEach(function(k){ A.mod[k].p *= decay; });
-      var aIdle = (nowMs - A.lastAt) > 15000;
+      var aFlight = applyPending(A.pend, A.mod);
+      var aIdle = !aFlight && (nowMs - A.lastAt) > 15000;
+      if(aFlight){
+        var secs = Math.round((nowMs - aFlight.at)/1000);
+        A.el.querySelector(".atool").textContent =
+          aFlight.tool + (secs > 2 ? "  " + secs + "s" : "");
+      }
       animateDroid(A.r2, A.mod, t, dt, aIdle);
       A.r2.group.position.set(A.r2.shake.x, 0, A.r2.shake.z);
 
@@ -1594,6 +1795,13 @@
       W.hook.position.x = slide;
       W.hook.position.y = -2.85 + Math.sin(t*0.5)*0.18;
       W.hook.rotation.y = t*0.25;
+      var busy = Math.min(1, MOD.scp.p + MOD.man.p + MOD.sns.p + MOD.int.p*0.5);
+      var st = inflight
+        ? { head:"RUNNING", label:inflight.tool, secs:Math.round((nowMs-inflight.at)/1000), mode:"run" }
+        : waiting
+        ? { head:"WAITING ON MODEL", label:live.lastTool, secs:Math.round(sinceLast/1000), mode:"wait" }
+        : { head:"IDLE", label:live.lastTool, secs:0, mode:"idle" };
+      W.monitor.tick(dt, st, busy, live.events, live.errors);
     }
 
     if(scanOn){
