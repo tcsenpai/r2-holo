@@ -147,7 +147,13 @@
      flight are tracked, and the droid holds its working pose for as long as
      the call actually lasts — which is the truth, not filler. */
   var mainPend = {};
+  var mainProps = { props:{} };
   var pendSeq = 0;
+  // Two honest signals for "waiting on a human": an AskUserQuestion /
+  // ExitPlanMode call still open, or a turn that has closed with no human
+  // turn after it. Anything else would be guesswork.
+  var ASK_TOOLS = /^(AskUserQuestion|ExitPlanMode)$/;
+  var mainTurnEnded = false;
   var PEND_MAX = 300000;      // give up on an unmatched call after 5 min
   var WAIT_WINDOW = 90000;    // after this, the session is genuinely idle
 
@@ -164,6 +170,23 @@
   }
   /* Holds the matching module up while a call is open, and reports the
      longest-running one so the UI can show what everyone is waiting for. */
+  function isAsk(pend){
+    var keys = Object.keys(pend);
+    for(var i=0;i<keys.length;i++) if(ASK_TOOLS.test(pend[keys[i]].tool)) return true;
+    return false;
+  }
+  /* red > blue > amber > green; nothing lit while a call is running */
+  function setLamps(r2, st, dt){
+    var want = { idle:0, wait:0, ask:0, err:0 };
+    if(st.err) want.err = 1;
+    else if(st.ask) want.ask = 1;
+    else if(st.wait) want.wait = 1;
+    else if(st.idle) want.idle = 1;
+    ["idle","wait","ask","err"].forEach(function(k){
+      r2.lamp[k] = damp(r2.lamp[k], want[k], 7, dt);
+    });
+  }
+
   function applyPending(pend, m){
     var now=Date.now(), oldest=null;
     Object.keys(pend).forEach(function(k){
@@ -507,15 +530,23 @@
       parent.add(d);
       return mm;
     }
-    var blipGood = blipMesh(dome, GOOD, [ 0.31, eyeY-0.03, eyeZ*0.90], 0.055);
-    var blipBad  = blipMesh(dome, BAD,  [-0.31, eyeY-0.03, eyeZ*0.90], 0.055);
-    // Waiting on the model is a state of the machine, not a caption: it gets
-    // a physical amber lamp on the hull rather than a label in the air.
-    var waitLed = blipMesh(squash, 0xffb454, [0, 1.62, 0.952], 0.085);
+    /* Status cluster on the dome. One lamp lit at a time, each colour with
+       exactly one meaning:
+         green  idle, nothing to do      blue  waiting on a human
+         amber  waiting on the model     red   something failed
+       While a call is actually running no lamp is lit — the callout and the
+       rig itself already say so. */
+    var lampY = Math.max(0.06, eyeY - 0.26), lampZ = eyeZ*0.88;
+    var lamps = {
+      idle: blipMesh(dome, GOOD,     [-0.255, lampY, lampZ], 0.05),
+      wait: blipMesh(dome, 0xffb454, [-0.085, lampY, lampZ], 0.05),
+      ask:  blipMesh(dome, 0x6fa8ff, [ 0.085, lampY, lampZ], 0.05),
+      err:  blipMesh(dome, BAD,      [ 0.255, lampY, lampZ], 0.05)
+    };
+    // the body logic display stays a neutral activity chase
     var logic = [];
     for(var li=0; li<4; li++){
-      logic.push(blipMesh(squash, li%2 ? GOOD : BAD,
-        [-0.21 + li*0.14, 2.32, 0.95], 0.035));
+      logic.push(blipMesh(squash, 0x5fe3ff, [-0.21 + li*0.14, 2.32, 0.95], 0.035));
     }
 
     // antennas live in their own group so they can lag behind the dome
@@ -620,8 +651,7 @@
     return {
       group:g, squash:squash, mats:M, dome:dome, eyeMat:eyeMat,
       antennas:antennas, scomp:scomp, scompArm:scompArm, manip:manip,
-      blipGood:blipGood, blipBad:blipBad, logic:logic, good:0, bad:0,
-      waitLed:waitLed, wait:0,
+      lamps:lamps, lamp:{idle:0, wait:0, ask:0, err:0}, logic:logic, good:0, bad:0,
       centerLeg:centerLeg, feet:FEET, beam:beam, beamMat:beamMat, topY:topY,
       sparkPos:sparkPos, sparkVel:sparkVel, sparkLife:sparkLife,
       sparkGeo:sparkGeo, sparkMat:sparkMat, SPARK_N:SPARK_N,
@@ -683,14 +713,16 @@
        plus a slow idle chase so the row never looks dead --- */
     r2.good = Math.max(0, r2.good - dt*2.2);
     r2.bad  = Math.max(0, r2.bad  - dt*2.2);
-    r2.blipGood.opacity = 0.07 + r2.good*0.9;
-    r2.blipBad.opacity  = 0.07 + r2.bad*0.9;
-    // slow amber breathing while the model is thinking
-    r2.waitLed.opacity = 0.03 + r2.wait * (0.30 + 0.34*(0.5+0.5*Math.sin(t*3.1)));
+    // each lamp breathes at its own rate: idle slow, error urgent
+    var breathe = { idle:1.1, wait:3.1, ask:2.2, err:7.0 };
+    ["idle","wait","ask","err"].forEach(function(kk){
+      var lv = r2.lamp[kk];
+      r2.lamps[kk].opacity = 0.03 + lv * (0.32 + 0.36*(0.5+0.5*Math.sin(t*breathe[kk])));
+    });
+    var actLvl = Math.min(1, r2.good + r2.bad + m.scp.p + m.man.p);
     for(var bi=0; bi<r2.logic.length; bi++){
       var chase = Math.max(0, Math.sin(t*2.6 - bi*0.9));
-      r2.logic[bi].opacity = 0.04 + chase*0.10 +
-        (bi%2 ? r2.good : r2.bad) * 0.55;
+      r2.logic[bi].opacity = 0.04 + chase*(0.08 + actLvl*0.22);
     }
 
     /* --- weight: the body leans toward the working arm and dips as an
@@ -920,7 +952,7 @@
               slot:slot, el:el, dying:false, t:0, clipT:0, kids:0,
               parent:parentId, series:null, targetScale:0.42, pend:{},
               anchor:anchor, woff:new THREE.Vector3(), rnext:1+Math.random()*4,
-              hd:wrap.rotation.y };
+              hd:wrap.rotation.y, props:{} };
     AGENTS[id] = A;
     buildAgentBody(A, seriesFor(model));
     markShared();
@@ -937,6 +969,10 @@
       if(o.material) o.material.dispose();
     });
     if(A.el.parentNode) A.el.parentNode.removeChild(A.el);
+    Object.keys(A.props||{}).forEach(function(k){
+      var P=A.props[k]; scene.remove(P.group);
+      P.group.traverse(function(o){ if(o.geometry) o.geometry.dispose(); if(o.material) o.material.dispose(); });
+    });
     if(A.tether){ scene.remove(A.tether); A.tether.geometry.dispose(); A.tether.material.dispose(); }
     slotUsed[A.slot] = false;
     delete AGENTS[id];
@@ -1212,7 +1248,65 @@
       };
     })();
 
-    workshop.userData = { trolley:trolley, hook:hook, monitor:monitor };
+    // comms mast: the station for anything that leaves the hull
+    var mast = new THREE.Group();
+    mast.position.set(-6.5, 0, 6.5);
+    workshop.add(mast);
+    addBox(mast, 0.3, 6.4, 0.3, [0, 3.2, 0], 0, wFaint);
+    [[0,1],[0.9,0.6],[-0.9,0.6]].forEach(function(o){
+      var d=new THREE.LineSegments(boxLines(0.1, 1.5, 0.1), wLine);
+      d.position.set(o[0], 6.0, 0);
+      d.rotation.z = o[0]*0.5;
+      mast.add(d);
+    });
+    (function(){                       // dish
+      var pts=[], seg=24, R=1.1;
+      for(var i=0;i<seg;i++){
+        var a0=(i/seg)*Math.PI*2, a1=((i+1)/seg)*Math.PI*2;
+        pts.push(Math.cos(a0)*R,0,Math.sin(a0)*R, Math.cos(a1)*R,0,Math.sin(a1)*R);
+        pts.push(0,0.5,0, Math.cos(a0)*R,0,Math.sin(a0)*R);
+      }
+      var g2=new THREE.BufferGeometry();
+      g2.setAttribute("position",new THREE.Float32BufferAttribute(pts,3));
+      var dish=new THREE.LineSegments(g2, wLine);
+      dish.position.set(0, 5.1, 0);
+      dish.rotation.x = -0.7;
+      mast.add(dish);
+    })();
+
+    /* Each fixture is a STATION for a class of work. When the bay is up the
+       droid drives to the right one and the prop is mounted there, instead
+       of floating beside him — the workshop stops being scenery. */
+    function station(kind, stand, mount, markAt, markR){
+      var mm = lineMaterial(PROJ, 0);
+      var pts=[], seg=48;
+      for(var i=0;i<seg;i++){
+        var a0=(i/seg)*Math.PI*2, a1=((i+1)/seg)*Math.PI*2;
+        pts.push(Math.cos(a0)*markR, 0, Math.sin(a0)*markR,
+                 Math.cos(a1)*markR, 0, Math.sin(a1)*markR);
+      }
+      var g3=new THREE.BufferGeometry();
+      g3.setAttribute("position", new THREE.Float32BufferAttribute(pts,3));
+      var ring=new THREE.LineSegments(g3, mm);
+      ring.position.set(markAt[0], 0.03, markAt[1]);
+      scene.add(ring);                                   // world space
+      return { kind:kind,
+               stand:new THREE.Vector3(stand[0],0,stand[1]),
+               mount:new THREE.Vector3(mount[0],mount[1],mount[2]),
+               mat:mm, ring:ring, lit:0 };
+    }
+    // fixtures live in a group scaled to 0.74, so stations are given in world
+    var STATIONS = {
+      read:  station("read",  [-4.3,-1.2], [-5.7, 2.5,-1.5], [-6.07,-1.63], 1.9),
+      write: null,
+      term:  station("term",  [ 1.4,-4.0], [ 1.9, 3.0,-5.5], [ 1.92,-5.92], 1.7),
+      index: station("index", [ 3.9,-1.8], [ 5.3, 2.4,-2.4], [ 5.62,-2.52], 1.9),
+      globe: station("globe", [-3.4, 3.4], [-4.7, 3.6, 4.7], [-4.81, 4.81], 1.8)
+    };
+    STATIONS.write = STATIONS.read;                      // same bench
+
+    workshop.userData = { trolley:trolley, hook:hook, monitor:monitor,
+                          stations:STATIONS, mast:mast };
   })();
 
   /* ===================================================================
@@ -1371,14 +1465,28 @@
       (st.secs > 1 ? '<span class="secs">'+st.secs+'s</span>' : '');
   }
 
-  var tmp=new THREE.Vector3();
+  var tmp=new THREE.Vector3(), tmpTagV=new THREE.Vector3();
   function updateSpots(w,h){
-    tmp.set(0, 5.2, 0); droid.localToWorld(tmp); tmp.project(camera);
-    if(tmp.z>1 || mainTag.dataset.off === "1"){ mainTag.style.display="none"; }
-    else {
-      mainTag.style.display="flex";
-      mainTag.style.transform="translate("+((tmp.x*0.5+0.5)*w).toFixed(1)+"px,"+((-tmp.y*0.5+0.5)*h).toFixed(1)+"px)";
+    // Callouts are HTML sitting on top of a 3D scene, so depth has to be
+    // applied by hand: nearer ones stack above, and everything shrinks and
+    // fades with distance. Without it two tags simply overlap and the far
+    // one can end up winning.
+    function placeTag(el, world, off){
+      // NDC z is non-linear and sits at ~0.99 for everything in frame, so it
+      // is useless as a depth cue. Real camera distance is what reads.
+      var dist = camera.position.distanceTo(world);
+      tmp.copy(world); tmp.project(camera);
+      if(tmp.z > 1 || off){ el.style.display="none"; return; }
+      el.style.display="flex";
+      var k = clamp(1.25 - dist*0.028, 0.60, 1.05);
+      el.style.transform =
+        "translate("+((tmp.x*0.5+0.5)*w).toFixed(1)+"px,"+((-tmp.y*0.5+0.5)*h).toFixed(1)+"px)"+
+        " scale("+k.toFixed(3)+") translate(-50%,-100%)";
+      el.style.zIndex = String(Math.max(0, Math.round(100000 - dist*1000)));
+      el.style.opacity = clamp(1.35 - dist*0.028, 0.45, 1).toFixed(2);
     }
+    tmpTagV.set(0, 5.2, 0); droid.localToWorld(tmpTagV);
+    placeTag(mainTag, tmpTagV, mainTag.dataset.off === "1");
     Object.keys(spotEls).forEach(function(k){
       var s=spotEls[k];
       tmp.copy(s.vec); droid.localToWorld(tmp); tmp.project(camera);
@@ -1388,10 +1496,8 @@
     });
     Object.keys(AGENTS).forEach(function(id){
       var A=AGENTS[id];
-      tmp.set(0, 4.8, 0); A.wrap.localToWorld(tmp); tmp.project(camera);
-      if(tmp.z>1){ A.el.style.display="none"; return; }
-      A.el.style.display="block";
-      A.el.style.transform="translate("+((tmp.x*0.5+0.5)*w).toFixed(1)+"px,"+((-tmp.y*0.5+0.5)*h).toFixed(1)+"px)";
+      tmpTagV.set(0, 4.8, 0); A.wrap.localToWorld(tmpTagV);
+      placeTag(A.el, tmpTagV, false);
     });
   }
 
@@ -1497,6 +1603,11 @@
       route(ev, A.mod, A.r2);
       bump(MOD,"vck",0.10);
     } else {
+      if(ev.kind==="system" && /turn_duration|stop_hook_summary/.test(ev.label||"")){
+        mainTurnEnded = true;          // turn closed: the ball is in our court
+      } else if(ev.kind!=="mode" && ev.kind!=="title"){
+        mainTurnEnded = false;
+      }
       if(ev.kind==="tool") pendStart(mainPend, ev);
       else if(ev.kind==="result") pendEnd(mainPend, ev);
       if(ev.kind==="result"){ if(ev.error) MAIN.bad = 1; else MAIN.good = 1; }
@@ -1684,6 +1795,192 @@
   });
 
   /* ===================================================================
+     11b. PROJECTED PROPS
+     A tool call is not only a pose. The droid projects the thing it is
+     working on, and the prop lives for exactly as long as the call does:
+     it is spawned by pendStart and dissolved by pendEnd, so it can never
+     drift out of sync with what is really happening.
+     =================================================================== */
+  function propFor(tool){
+    if(!tool) return null;
+    if(/^(Read|NotebookRead)$/.test(tool)) return "read";
+    if(/^(Write|Edit|MultiEdit|NotebookEdit)$/.test(tool)) return "write";
+    if(/^(Grep|Glob|LS|TodoRead|TodoWrite)$/.test(tool)) return "index";
+    if(/^(Bash|BashOutput|KillShell|KillBash)$/.test(tool)) return "term";
+    if(/^(WebSearch|WebFetch)$/.test(tool) || tool.indexOf("mcp__")===0) return "globe";
+    return null;
+  }
+
+  function rectGeo(w,h){
+    var g=new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute([
+      -w/2,-h/2,0,  w/2,-h/2,0,   w/2,-h/2,0,  w/2, h/2,0,
+       w/2, h/2,0, -w/2, h/2,0,  -w/2, h/2,0, -w/2,-h/2,0
+    ],3));
+    return g;
+  }
+  function segGeo(x1,y1,x2,y2){
+    var g=new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute([x1,y1,0, x2,y2,0],3));
+    return g;
+  }
+
+  function buildProp(kind){
+    var g = new THREE.Group(), mats = [], rows = [], extra = {};
+    function M(op, col){
+      var m = lineMaterial(col===undefined?PROJ:new THREE.Color(col), op);
+      m.userData.base = op; mats.push(m); return m;
+    }
+    function add(geo, m){ var o=new THREE.LineSegments(geo,m); g.add(o); return o; }
+
+    if(kind === "read" || kind === "write"){
+      // a document page, read by a travelling scan bar or written line by line
+      add(rectGeo(1.5, 1.95), M(0.55));
+      add(segGeo(-0.75, 0.72, 0.75, 0.72), M(0.30));       // header rule
+      for(var i=0;i<12;i++){
+        var len = 0.55 + Math.random()*0.75;
+        var y = 0.55 - i*0.115;
+        rows.push(add(segGeo(-0.62, y, -0.62+len, y), M(0.42)));
+      }
+      extra.scan = add(segGeo(-0.72, 0, 0.72, 0), M(0.9, 0xbff4ff));
+      extra.dot  = add(rectGeo(0.09, 0.09), M(0.9, 0xbff4ff));
+
+    } else if(kind === "term"){
+      // a shell panel: lines scroll up under a blinking cursor
+      add(rectGeo(2.3, 1.35), M(0.55));
+      add(segGeo(-1.15, 0.50, 1.15, 0.50), M(0.30));
+      for(var j=0;j<7;j++){
+        var l2 = 0.4 + Math.random()*1.5;
+        rows.push(add(segGeo(-1.02, 0.36 - j*0.16, -1.02+l2, 0.36 - j*0.16), M(0.40)));
+      }
+      extra.prompt = add(segGeo(-1.08, 0.62, -0.92, 0.62), M(0.8, 0xbff4ff));
+      extra.cursor = add(rectGeo(0.10, 0.13), M(0.95, 0xbff4ff));
+
+    } else if(kind === "index"){
+      // a directory being swept by a search reticle
+      add(rectGeo(2.25, 1.65), M(0.5));
+      for(var r=0;r<4;r++) for(var c=0;c<3;c++){
+        var cell = add(rectGeo(0.56, 0.26), M(0.30));
+        cell.position.set(-0.68 + c*0.68, 0.52 - r*0.34, 0);
+        rows.push(cell);
+      }
+      extra.reticle = add(rectGeo(0.66, 0.34), M(0.95, 0xbff4ff));
+
+    } else {                                   // globe: anything off-hull
+      var pts=[], R=0.78;
+      for(var la=1; la<5; la++){                            // parallels
+        var phi=(la/5)*Math.PI, rr=Math.sin(phi)*R, yy=Math.cos(phi)*R, seg=30;
+        for(var k2=0;k2<seg;k2++){
+          var a0=(k2/seg)*Math.PI*2, a1=((k2+1)/seg)*Math.PI*2;
+          pts.push(Math.cos(a0)*rr, yy, Math.sin(a0)*rr, Math.cos(a1)*rr, yy, Math.sin(a1)*rr);
+        }
+      }
+      for(var me=0; me<6; me++){                            // meridians
+        var ang=(me/6)*Math.PI, st2=22;
+        for(var s2=0;s2<st2;s2++){
+          var p0=(s2/st2)*Math.PI, p1=((s2+1)/st2)*Math.PI;
+          pts.push(Math.sin(p0)*R*Math.cos(ang), Math.cos(p0)*R, Math.sin(p0)*R*Math.sin(ang));
+          pts.push(Math.sin(p1)*R*Math.cos(ang), Math.cos(p1)*R, Math.sin(p1)*R*Math.sin(ang));
+        }
+      }
+      var gg=new THREE.BufferGeometry();
+      gg.setAttribute("position", new THREE.Float32BufferAttribute(pts,3));
+      extra.globe = add(gg, M(0.42));
+
+      var rp=[], seg3=64, RR=1.08;
+      for(var i3=0;i3<seg3;i3++){
+        var b0=(i3/seg3)*Math.PI*2, b1=((i3+1)/seg3)*Math.PI*2;
+        rp.push(Math.cos(b0)*RR,0,Math.sin(b0)*RR, Math.cos(b1)*RR,0,Math.sin(b1)*RR);
+      }
+      var rg=new THREE.BufferGeometry();
+      rg.setAttribute("position", new THREE.Float32BufferAttribute(rp,3));
+      extra.ring = add(rg, M(0.7, 0xbff4ff));
+      extra.ring.rotation.x = 0.5;
+    }
+
+    g.visible = false;
+    scene.add(g);
+
+    return {
+      kind:kind, group:g, level:0, mats:mats, rows:rows, x:extra,
+      setLevel: function(v){
+        for(var i=0;i<mats.length;i++) mats[i].opacity = mats[i].userData.base * v;
+      },
+      update: function(dt, tt, age){
+        var X = this.x;
+        if(kind === "read"){
+          var sy = 0.62 - ((tt*0.55) % 1) * 1.3;            // scan sweeps down
+          X.scan.position.y = sy;
+          X.dot.position.set(0.62, sy, 0);
+          for(var i=0;i<rows.length;i++){
+            var near = 1 - Math.min(1, Math.abs(rows[i].position.y + 0 - sy)*3);
+            rows[i].material.opacity = rows[i].material.userData.base * this.level * (0.6 + near*1.6);
+          }
+        } else if(kind === "write"){
+          var prog = Math.min(1, (age % 6) / 4.2);          // lines appear
+          var cut = Math.floor(prog * rows.length);
+          for(var w2=0; w2<rows.length; w2++){
+            rows[w2].visible = w2 <= cut;
+          }
+          var cy = 0.55 - Math.min(rows.length-1, cut)*0.115;
+          X.scan.position.y = cy;
+          X.scan.scale.x = 0.12;
+          X.dot.position.set(-0.1 + Math.sin(tt*9)*0.02, cy, 0);
+        } else if(kind === "term"){
+          var shift = ((tt*0.7) % 1) * 0.16;
+          for(var q=0;q<rows.length;q++) rows[q].position.y = shift;
+          X.cursor.position.set(-1.0 + ((tt*1.4)%1)*0.9, 0.62, 0);
+          X.cursor.material.opacity =
+            X.cursor.material.userData.base * this.level * (Math.sin(tt*7)>0 ? 1 : 0.15);
+        } else if(kind === "index"){
+          var cellI = Math.floor(tt*2.2) % rows.length;
+          var cc = rows[cellI];
+          X.reticle.position.copy(cc.position);
+          for(var z2=0; z2<rows.length; z2++){
+            var hit = (z2 % 5 === 0);
+            rows[z2].material.opacity = rows[z2].material.userData.base * this.level *
+              (z2===cellI ? 2.4 : (hit ? 1.5 : 1));
+          }
+        } else {
+          X.globe.rotation.y += dt*0.6;
+          X.ring.rotation.y  -= dt*0.9;
+          X.ring.rotation.z   = Math.sin(tt*0.7)*0.25;
+        }
+      }
+    };
+  }
+
+  var propDir=new THREE.Vector3(), propRight=new THREE.Vector3(), propAnchor=new THREE.Vector3();
+  /* Props are placed to the camera's right of their droid and billboarded,
+     so they never end up hidden behind the unit that is projecting them. */
+  function updateProps(store, flight, dt, tt, anchor, scale, mount){
+    var kind = flight ? propFor(flight.tool) : null;
+    if(kind && !store.props[kind]) store.props[kind] = buildProp(kind);
+    camera.getWorldDirection(propDir);
+    propRight.crossVectors(propDir, camera.up).normalize();
+    var keys = Object.keys(store.props);
+    for(var i=0;i<keys.length;i++){
+      var P = store.props[keys[i]];
+      var target = (keys[i] === kind) ? 1 : 0;
+      P.level = damp(P.level, target, target ? 6 : 7, dt);
+      if(P.level < 0.012){ P.group.visible = false; continue; }
+      P.group.visible = true;
+      P.setLevel(P.level);
+      P.update(dt, tt, flight ? (Date.now()-flight.at)/1000 : 0);
+      if(mount){
+        P.group.position.copy(mount);                    // mounted on a fixture
+      } else {
+        propAnchor.copy(anchor)
+          .addScaledVector(propRight, 2.45*scale)
+          .setY(anchor.y + 2.9*scale);
+        P.group.position.copy(propAnchor);
+      }
+      P.group.lookAt(camera.position);
+      P.group.scale.setScalar(scale * (0.35 + 0.65*easeOutBack(Math.min(1,P.level))));
+    }
+  }
+
+  /* ===================================================================
      12. LOOP
      =================================================================== */
   function resize(){
@@ -1744,18 +2041,34 @@
     if(waiting) MOD.int.p = Math.max(MOD.int.p, 0.20);
     var idle = !inflight && !waiting;
 
+    /* If the bay is up and the tool has a station, that fixture is where the
+       work happens: the droid drives there and the prop mounts on it. */
+    var stKind = inflight ? propFor(inflight.tool) : null;
+    var station = (shopOn && stKind && workshop.userData.stations)
+                    ? workshop.userData.stations[stKind] : null;
+
+    var errRecent = MOD.ext.p > 0.25;
+    var asking = isAsk(mainPend) || (!inflight && mainTurnEnded);
+    setLamps(MAIN, {err:errRecent, ask:asking,
+                    wait:waiting && !asking, idle:idle && !asking}, dt);
+
     var status = inflight
       ? { head:"RUNNING", label:inflight.tool, secs:Math.round((nowMs-inflight.at)/1000), mode:"run" }
       : waiting
       ? { head:"WAITING ON MODEL", label:live.lastTool, secs:Math.round(sinceLast/1000), mode:"wait" }
       : { head:"IDLE", label:live.lastTool, secs:0, mode:"idle" };
-    MAIN.wait = damp(MAIN.wait, waiting ? 1 : 0, 6, dt);
     setMainTag(status);
+    propAnchor.copy(droid.position);
+    updateProps(mainProps, inflight, dt, t, propAnchor, 1,
+                station ? station.mount : null);
 
     var ex = animateDroid(MAIN, MOD, t, dt, idle);
 
     /* --- patrol: pick a spot, roll to it, park in the middle when idle --- */
-    if(roamOn && !idle){
+    if(station){
+      roam.target.copy(station.stand);
+      roam.next = 2.5;                       // resume wandering once it ends
+    } else if(roamOn && !idle){
       roam.next -= dt;
       if(roam.next <= 0){
         var ra = Math.random()*Math.PI*2, rr = 0.9 + Math.random()*2.5;
@@ -1764,6 +2077,19 @@
       }
     } else {
       roam.target.set(0,0,0);
+    }
+
+    // light the station he is working at, dim the rest
+    if(workshop.userData.stations){
+      var SS = workshop.userData.stations, seen = {};
+      Object.keys(SS).forEach(function(k){
+        var St = SS[k];
+        if(!St || seen[St.kind]) return;
+        seen[St.kind] = 1;
+        St.lit = damp(St.lit, (station === St) ? 1 : 0, 5, dt);
+        St.mat.opacity = St.lit * (0.28 + 0.22*(0.5+0.5*Math.sin(t*2.4)));
+        St.ring.visible = St.lit > 0.02;
+      });
     }
     var pX = roam.pos.x, pZ = roam.pos.z;
     roam.pos.x = damp(roam.pos.x, roam.target.x, 0.85, dt);
@@ -1804,9 +2130,11 @@
       var aSince = nowMs - A.lastAt;
       var aWait = !aFlight && aSince < WAIT_WINDOW;
       var aIdle = !aFlight && !aWait;
-      A.r2.wait = damp(A.r2.wait, aWait ? 1 : 0, 6, dt);
-
-      var aMode = aFlight ? "run" : (aWait ? "wait" : "idle");
+      var aAsk = isAsk(A.pend);
+      setLamps(A.r2, { err: A.mod.ext.p > 0.25, ask: aAsk,
+                       wait: aWait && !aAsk, idle: aIdle && !aAsk }, dt);
+      updateProps(A, aFlight, dt, t, A.wrap.position, A.targetScale/0.52);
+      var aMode = aFlight ? "run" : (aAsk ? "ask" : (aWait ? "wait" : "idle"));
       var aSecs = aFlight ? Math.round((nowMs - aFlight.at)/1000)
                           : Math.round(aSince/1000);
       var aKey = aMode + "|" + (aFlight ? aFlight.tool : "") + "|" + aSecs;
