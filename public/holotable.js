@@ -237,7 +237,7 @@
      =================================================================== */
   var stage = document.getElementById("stage");
   var scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x03070e, 0.012);
+  scene.fog = new THREE.FogExp2(0x03070e, 0.0085);
   var camera = new THREE.PerspectiveCamera(42, 1, 0.1, 400);
 
   var renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
@@ -930,7 +930,7 @@
       var P = AGENTS[parentId];
       P.kids = (P.kids || 0) + 1;
       var ca = (P.kids-1) * 1.25 + 0.6;
-      var cr = 3.4 * (P.targetScale/0.52);
+      var cr = 4.0 * (P.targetScale/0.52);
       anchor = new THREE.Vector3(Math.cos(ca)*cr, 0, Math.sin(ca)*cr); // vs parent
       wrap.position.set(P.wrap.position.x + anchor.x, 0,
                         P.wrap.position.z + anchor.z);
@@ -938,7 +938,7 @@
                                     P.wrap.position.x - wrap.position.x) + Math.PI/2;
     } else {
       var ang = (slot/SLOTS)*Math.PI*2 + 0.35;
-      var R = 7.6;
+      var R = 9.8;
       wrap.position.set(Math.cos(ang)*R, 0, Math.sin(ang)*R);
       wrap.rotation.y = -ang + Math.PI/2;      // face the centre
       anchor = wrap.position.clone();          // absolute home
@@ -999,7 +999,7 @@
   scene.add(gridGroup);
   (function(){
     var pts=[];
-    [2,4,6,8,10,12,14].forEach(function(r){
+    [3,6,9,12,15,18,21].forEach(function(r){
       var seg=72;
       for(var i=0;i<seg;i++){
         var a0=(i/seg)*Math.PI*2,a1=((i+1)/seg)*Math.PI*2;
@@ -1008,7 +1008,7 @@
     });
     for(var k=0;k<16;k++){
       var a=(k/16)*Math.PI*2;
-      pts.push(Math.cos(a)*2,0,Math.sin(a)*2, Math.cos(a)*14,0,Math.sin(a)*14);
+      pts.push(Math.cos(a)*3,0,Math.sin(a)*3, Math.cos(a)*21,0,Math.sin(a)*21);
     }
     var g=new THREE.BufferGeometry();
     g.setAttribute("position",new THREE.Float32BufferAttribute(pts,3));
@@ -1046,7 +1046,7 @@
 
   var scanRing;
   (function(){
-    var pts=[],seg=96,r=9.5;
+    var pts=[],seg=96,r=13;
     for(var i=0;i<seg;i++){
       var a0=(i/seg)*Math.PI*2,a1=((i+1)/seg)*Math.PI*2;
       pts.push(Math.cos(a0)*r,0,Math.sin(a0)*r, Math.cos(a1)*r,0,Math.sin(a1)*r);
@@ -1060,8 +1060,8 @@
   (function(){
     var n=340,arr=new Float32Array(n*3);
     for(var i=0;i<n;i++){
-      var r=5+Math.random()*22,a=Math.random()*Math.PI*2;
-      arr[i*3]=Math.cos(a)*r; arr[i*3+1]=Math.random()*11; arr[i*3+2]=Math.sin(a)*r;
+      var r=6+Math.random()*32,a=Math.random()*Math.PI*2;
+      arr[i*3]=Math.cos(a)*r; arr[i*3+1]=Math.random()*14; arr[i*3+2]=Math.sin(a)*r;
     }
     var g=new THREE.BufferGeometry();
     g.setAttribute("position",new THREE.BufferAttribute(arr,3));
@@ -1079,6 +1079,7 @@
      =================================================================== */
   var workshop = new THREE.Group();
   scene.add(workshop);
+  var PICKS = [];
 
   (function buildWorkshop(){
     // Dimmer than the droids, but not so dim the bay disappears into fog.
@@ -1098,7 +1099,7 @@
 
     // bay floor markings
     (function(){
-      var pts=[], w=7.4, d=5.2, x0=-w/2, z0=-d/2;
+      var pts=[], w=11.0, d=7.6, x0=-w/2, z0=-d/2;
       [[x0,z0,x0+w,z0],[x0+w,z0,x0+w,z0+d],[x0+w,z0+d,x0,z0+d],[x0,z0+d,x0,z0]]
         .forEach(function(e){ pts.push(e[0],0.01,e[1], e[2],0.01,e[3]); });
       for(var i=1;i<10;i++){
@@ -1108,42 +1109,42 @@
       var g=new THREE.BufferGeometry();
       g.setAttribute("position",new THREE.Float32BufferAttribute(pts,3));
       var o=new THREE.LineSegments(g,wWarm);
-      o.position.set(0,0,-8.6);
+      o.position.set(0,0,-13.5);
       workshop.add(o);
     })();
 
     // workbench with a tool rack
     var bench = new THREE.Group();
-    bench.position.set(-8.2, 0, -2.2);
+    bench.position.set(-13.0, 0, -3.0);
     bench.rotation.y = 0.9;
     workshop.add(bench);
-    addBox(bench, 4.6, 0.16, 1.5, [0, 1.05, 0]);
-    [-2.0, 2.0].forEach(function(x){
-      addBox(bench, 0.16, 1.05, 1.3, [x, 0.52, 0], 0, wFaint);
+    addBox(bench, 6.2, 0.18, 2.0, [0, 1.05, 0]);
+    [-2.8, 2.8].forEach(function(x){
+      addBox(bench, 0.18, 1.05, 1.8, [x, 0.52, 0], 0, wFaint);
     });
-    addBox(bench, 4.6, 0.9, 0.08, [0, 2.15, -0.6], 0, wFaint);
-    for(var ti=0; ti<5; ti++){
-      var tool=new THREE.LineSegments(boxLines(0.07, 0.5 + (ti%3)*0.22, 0.07), wLine);
-      tool.position.set(-1.7 + ti*0.85, 1.95 - (ti%3)*0.1, -0.5);
+    addBox(bench, 6.2, 1.3, 0.09, [0, 2.4, -0.85], 0, wFaint);
+    for(var ti=0; ti<7; ti++){
+      var tool=new THREE.LineSegments(boxLines(0.08, 0.6 + (ti%3)*0.26, 0.08), wLine);
+      tool.position.set(-2.4 + ti*0.8, 2.2 - (ti%3)*0.12, -0.72);
       bench.add(tool);
     }
 
     // parts crates
-    [[7.6,-3.4,0.5],[8.4,-1.2,-0.3],[6.9,-4.6,1.1]].forEach(function(c,i){
-      addBox(workshop, 1.2, 1.2, 1.2, [c[0], 0.6, c[1]], c[2], i===1?wFaint:wLine);
+    [[12.5,-5.2,0.5],[13.8,-2.2,-0.3],[11.2,-7.8,1.1],[13.2,-8.6,0.2]].forEach(function(c,i){
+      addBox(workshop, 1.5, 1.5, 1.5, [c[0], 0.75, c[1]], c[2], i===1?wFaint:wLine);
     });
-    addBox(workshop, 1.2, 1.2, 1.2, [7.6, 1.8, -3.4], 0.5, wFaint);
+    addBox(workshop, 1.5, 1.5, 1.5, [12.5, 2.25, -5.2], 0.5, wFaint);
 
     // overhead gantry with a hook on a cable
     var gantry = new THREE.Group();
     gantry.position.y = 11.6;
     workshop.add(gantry);
-    [-3.2, 3.2].forEach(function(z){
-      var r=new THREE.LineSegments(boxLines(17, 0.18, 0.18), wLine);
+    [-5.5, 5.5].forEach(function(z){
+      var r=new THREE.LineSegments(boxLines(30, 0.2, 0.2), wLine);
       r.position.set(0, 0, z);
       gantry.add(r);
     });
-    var trolley = new THREE.LineSegments(boxLines(1.1, 0.5, 6.8), wLine);
+    var trolley = new THREE.LineSegments(boxLines(1.3, 0.55, 11.4), wLine);
     gantry.add(trolley);
     var cg=new THREE.BufferGeometry();
     cg.setAttribute("position", new THREE.Float32BufferAttribute([0,0,0, 0,-2.6,0],3));
@@ -1154,17 +1155,18 @@
     gantry.add(hook);
 
     // corner pylons
-    [[-9.5,-9.5],[9.5,-9.5],[-9.5,9.5],[9.5,9.5]].forEach(function(c){
+    [[-15.5,-15.5],[15.5,-15.5],[-15.5,15.5],[15.5,15.5],
+     [0,-16.5],[0,16.5],[-16.5,0],[16.5,0]].forEach(function(c){
       addBox(workshop, 0.42, 13.4, 0.42, [c[0], 6.7, c[1]], 0, wFaint);
     });
 
     // diagnostic screen on a stand
     var screen = new THREE.Group();
-    screen.position.set(2.6, 0, -8.0);
+    screen.position.set(4.5, 0, -13.0);
     screen.rotation.y = -0.35;
     workshop.add(screen);
-    addBox(screen, 0.2, 2.2, 0.2, [0, 1.1, 0], 0, wFaint);
-    addBox(screen, 2.6, 1.6, 0.1, [0, 3.0, 0]);
+    addBox(screen, 0.24, 2.4, 0.24, [0, 1.2, 0], 0, wFaint);
+    addBox(screen, 3.6, 2.2, 0.12, [0, 3.4, 0]);
     // The screen is a real canvas: the last tool in plain type over a
     // glyph rain whose speed tracks how busy the session is.
     var monitor = (function(){
@@ -1286,7 +1288,7 @@
 
     // comms mast: the station for anything that leaves the hull
     var mast = new THREE.Group();
-    mast.position.set(-6.5, 0, 6.5);
+    mast.position.set(-10.5, 0, 10.5);
     workshop.add(mast);
     addBox(mast, 0.3, 9.4, 0.3, [0, 4.7, 0], 0, wFaint);
     [[0,1],[0.9,0.6],[-0.9,0.6]].forEach(function(o){
@@ -1312,13 +1314,13 @@
 
     // Charging bay: where the droid docks while the context is compacted
     var bay = new THREE.Group();
-    bay.position.set(0, 0, 10.4);
+    bay.position.set(0, 0, 16.0);
     workshop.add(bay);
-    addBox(bay, 4.0, 0.22, 3.2, [0, 0.11, 0], 0, wLine);        // pad
-    [-1.8, 1.8].forEach(function(x){
+    addBox(bay, 5.2, 0.24, 4.2, [0, 0.12, 0], 0, wLine);        // pad
+    [-2.4, 2.4].forEach(function(x){
       addBox(bay, 0.26, 6.2, 0.26, [x, 3.1, -1.2], 0, wFaint);  // uprights
     });
-    addBox(bay, 4.0, 0.26, 0.26, [0, 6.2, -1.2], 0, wLine);     // arch
+    addBox(bay, 5.2, 0.28, 0.28, [0, 6.2, -1.5], 0, wLine);     // arch
     [-1.0, 1.0].forEach(function(x){
       addBox(bay, 0.5, 0.5, 0.9, [x, 5.0, -0.9], 0, wWarm);     // emitters
     });
@@ -1356,18 +1358,18 @@
     }
     // fixtures live in a group scaled to 0.74, so stations are given in world
     var STATIONS = {
-      read:   station("read",   [-5.8,-1.6], [-7.6, 2.6,-2.0], [-8.2,-2.2], 2.5),
+      read:   station("read",   [-9.4,-2.2], [-12.2, 2.8, -2.8], [-13.0,-3.0], 3.4),
       write:  null,
-      term:   station("term",   [ 1.8,-5.6], [ 2.5, 3.2,-7.4], [ 2.6,-8.0], 2.3),
-      index:  station("index",  [ 5.4,-2.4], [ 7.2, 2.6,-3.2], [ 7.6,-3.0], 2.5),
-      globe:  station("globe",  [-4.6, 4.6], [-6.2, 4.2, 6.2], [-6.5, 6.5], 2.5),
-      charge: station("charge", [ 0.0, 8.6], [ 0.0, 3.6,10.6], [ 0.0,10.4], 3.0)
+      term:   station("term",   [ 3.2,-9.6], [  4.3, 3.6,-12.0], [  4.5,-13.0], 3.2),
+      index:  station("index",  [ 8.8,-4.2], [ 11.8, 2.8, -5.4], [ 12.5,-5.2], 3.4),
+      globe:  station("globe",  [-7.4, 7.4], [-10.0, 4.4, 10.0], [-10.5, 10.5], 3.4),
+      charge: station("charge", [ 0.0,13.2], [  0.0, 3.8, 16.2], [  0.0,16.0], 3.6)
     };
     STATIONS.write = STATIONS.read;                      // same bench
 
     (function(){                       // ceiling web: gives the room a top
       var pts=[], seg=64;
-      [5,9,13].forEach(function(r){
+      [8,14,20].forEach(function(r){
         for(var i=0;i<seg;i++){
           var a0=(i/seg)*Math.PI*2, a1=((i+1)/seg)*Math.PI*2;
           pts.push(Math.cos(a0)*r, 0, Math.sin(a0)*r, Math.cos(a1)*r, 0, Math.sin(a1)*r);
@@ -1375,14 +1377,57 @@
       });
       for(var k3=0;k3<12;k3++){
         var a3=(k3/12)*Math.PI*2;
-        pts.push(Math.cos(a3)*5,0,Math.sin(a3)*5, Math.cos(a3)*13,0,Math.sin(a3)*13);
+        pts.push(Math.cos(a3)*8,0,Math.sin(a3)*8, Math.cos(a3)*20,0,Math.sin(a3)*20);
       }
       var cg2=new THREE.BufferGeometry();
       cg2.setAttribute("position", new THREE.Float32BufferAttribute(pts,3));
       var ceil=new THREE.LineSegments(cg2, wFaint);
-      ceil.position.y = 13.4;
+      ceil.position.y = 15.0;
       workshop.add(ceil);
     })();
+
+    /* An invisible volume over each fixture, so the bay can explain itself:
+       hover names it, a click opens a card. Nothing about the model changes. */
+    function pick(w,h,d, pos, info){
+      var m = new THREE.Mesh(
+        new THREE.BoxGeometry(w,h,d),
+        new THREE.MeshBasicMaterial({transparent:true, opacity:0, depthWrite:false})
+      );
+      m.position.set(pos[0], pos[1], pos[2]);
+      m.userData.info = info;
+      workshop.add(m);
+      PICKS.push(m);
+    }
+    pick(7.0, 4.0, 3.2, [-13.0, 2.0, -3.2], {
+      kind:"Station · bench", title:"Workbench",
+      body:"Where file work happens. The droid drives here and the page it is reading or writing is projected over the bench.",
+      tools:"Read · Write · Edit · MultiEdit · NotebookEdit"
+    });
+    pick(4.4, 5.2, 2.0, [4.5, 2.6, -13.0], {
+      kind:"Station · screen", title:"Diagnostic screen",
+      body:"The shell station. A terminal panel with scrolling output is mounted here for the length of the command.",
+      tools:"Bash · BashOutput · KillShell"
+    });
+    pick(5.5, 4.0, 8.5, [12.5, 2.0, -5.5], {
+      kind:"Station · crates", title:"Parts crates",
+      body:"Search and listing work. A directory grid is swept by a reticle while the query runs.",
+      tools:"Grep · Glob · LS · TodoRead · TodoWrite"
+    });
+    pick(3.6, 10.0, 3.6, [-10.5, 5.0, 10.5], {
+      kind:"Station · mast", title:"Comms mast",
+      body:"Anything that leaves the hull. A wireframe globe turns beside the dish while the call is open.",
+      tools:"WebSearch · WebFetch · MCP tools"
+    });
+    pick(6.0, 7.0, 5.0, [0, 3.2, 16.0], {
+      kind:"Station · bay", title:"Charging bay",
+      body:"The droid docks here when the transcript logs a context compaction, and energy rings climb the hull. The marker says a compaction happened, not how long it took, so the dock runs for a fixed stretch.",
+      tools:"system · compact_boundary"
+    });
+    pick(3.2, 6.0, 3.2, [0, 3.0, 0], {
+      kind:"Readout", title:"Holo column",
+      body:"The session readout: current state, the tool in flight with its elapsed time, and a glyph rain whose speed tracks how busy the session is. It stays up even with the bay hidden.",
+      tools:"always on"
+    });
 
     workshop.userData = { trolley:trolley, hook:hook, monitor:monitor,
                           stations:STATIONS, mast:mast, bay:bay };
@@ -1399,13 +1444,13 @@
   };
   var roamOn = !reduce;
 
-  var cam = {theta:0.62, phi:1.09, radius:25, target:new THREE.Vector3(0,3.2,0)};
-  var HOME = {theta:0.62, phi:1.09, radius:25};
+  var cam = {theta:0.62, phi:1.07, radius:31, target:new THREE.Vector3(0,3.4,0)};
+  var HOME = {theta:0.62, phi:1.07, radius:31};
   var autoSpin = !reduce;
 
   function applyCamera(){
     cam.phi = clamp(cam.phi, 0.22, Math.PI-0.22);
-    cam.radius = clamp(cam.radius, 6, 60);
+    cam.radius = clamp(cam.radius, 6, 85);
     var s=Math.sin(cam.phi);
     camera.position.set(
       cam.target.x + cam.radius*s*Math.sin(cam.theta),
@@ -1415,17 +1460,39 @@
     camera.lookAt(cam.target);
   }
   var drag=null, pinch=null, el=renderer.domElement;
+  var pressAt = 0, pressX = 0, pressY = 0;
   el.addEventListener("pointerdown",function(e){
     el.setPointerCapture(e.pointerId); drag={x:e.clientX,y:e.clientY};
+    pressAt = performance.now(); pressX = e.clientX; pressY = e.clientY;
     autoSpin=false; syncSpin();
   });
   el.addEventListener("pointermove",function(e){
-    if(!drag) return;
+    if(!drag){                                  // hover: name the fixture
+      var h = pickAt(e.clientX, e.clientY);
+      hovered = h;
+      el.style.cursor = h ? "pointer" : "grab";
+      if(h){
+        hintEl.textContent = h.userData.info.title;
+        hintEl.dataset.cx = e.clientX; hintEl.dataset.cy = e.clientY;
+      } else {
+        hintEl.style.display = "none";
+      }
+      return;
+    }
     cam.theta -= (e.clientX-drag.x)*0.006;
     cam.phi   -= (e.clientY-drag.y)*0.006;
     drag.x=e.clientX; drag.y=e.clientY; applyCamera();
   });
-  function endDrag(e){ if(drag){ try{el.releasePointerCapture(e.pointerId);}catch(x){} } drag=null; }
+  function endDrag(e){
+    if(drag){ try{el.releasePointerCapture(e.pointerId);}catch(x){} }
+    drag=null;
+    // a short press that barely moved is a click, not an orbit
+    var moved = Math.abs(e.clientX-pressX) + Math.abs(e.clientY-pressY);
+    if(performance.now()-pressAt < 300 && moved < 6){
+      var h = pickAt(e.clientX, e.clientY);
+      if(h) openStation(h); else closeStation();
+    }
+  }
   el.addEventListener("pointerup",endDrag);
   el.addEventListener("pointercancel",endDrag);
   el.addEventListener("wheel",function(e){
@@ -1443,6 +1510,35 @@
     }
   },{passive:false});
   el.addEventListener("touchend",function(){ pinch=null; });
+
+  /* --- station picking ------------------------------------------------ */
+  var ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+  var hintEl = document.getElementById("station-hint");
+  var cardEl = document.getElementById("station-card");
+  var hovered = null, openPick = null;
+
+  function pickAt(cx, cy){
+    if(!shopOn) return null;
+    var r = el.getBoundingClientRect();
+    ndc.x =  ((cx - r.left)/r.width)*2 - 1;
+    ndc.y = -((cy - r.top)/r.height)*2 + 1;
+    ray.setFromCamera(ndc, camera);
+    var hits = ray.intersectObjects(PICKS, false);
+    return hits.length ? hits[0].object : null;
+  }
+  function openStation(obj){
+    openPick = obj;
+    var I = obj.userData.info;
+    cardEl.querySelector(".st-kind").textContent  = I.kind;
+    cardEl.querySelector(".st-title").textContent = I.title;
+    cardEl.querySelector(".st-body").textContent  = I.body;
+    cardEl.querySelector(".st-tools").textContent = I.tools;
+    cardEl.style.display = "block";
+  }
+  function closeStation(){ openPick = null; cardEl.style.display = "none"; }
+  document.getElementById("station-close").addEventListener("click", function(e){
+    e.stopPropagation(); closeStation();
+  });
 
   /* ===================================================================
      7. RAIL, HOTSPOTS, READOUT
@@ -1564,6 +1660,29 @@
       el.style.zIndex = String(Math.max(0, Math.round(100000 - dist*1000)));
       el.style.opacity = clamp(1.35 - dist*0.028, 0.45, 1).toFixed(2);
     }
+    if(hovered && !openPick){
+      hintEl.style.display = "block";
+      hintEl.style.transform = "translate("+hintEl.dataset.cx+"px,"+
+        (Number(hintEl.dataset.cy)-22)+"px) translate(-50%,-100%)";
+    } else {
+      hintEl.style.display = "none";
+    }
+    if(openPick){
+      hovered = null;
+      tmpTagV.copy(openPick.position);
+      openPick.parent.localToWorld(tmpTagV);
+      tmpTagV.y += openPick.geometry.parameters.height*0.5 + 0.6;
+      tmp.copy(tmpTagV); tmp.project(camera);
+      if(tmp.z > 1){ cardEl.style.display = "none"; }
+      else {
+        cardEl.style.display = "block";
+        var kk = clamp(1.3 - camera.position.distanceTo(tmpTagV)*0.018, 0.68, 1.0);
+        cardEl.style.transform =
+          "translate("+((tmp.x*0.5+0.5)*w).toFixed(1)+"px,"+((-tmp.y*0.5+0.5)*h).toFixed(1)+"px)"+
+          " scale("+kk.toFixed(3)+") translate(-50%,-100%)";
+      }
+    }
+
     tmpTagV.set(0, 5.2, 0); droid.localToWorld(tmpTagV);
     placeTag(mainTag, tmpTagV, mainTag.dataset.off === "1");
     Object.keys(spotEls).forEach(function(k){
@@ -1850,7 +1969,10 @@
     btnShop.setAttribute("aria-pressed", shopOn?"true":"false");
     workshop.visible = shopOn;
   }
-  btnShop.addEventListener("click",function(){ shopOn=!shopOn; syncShop(); });
+  btnShop.addEventListener("click",function(){
+    shopOn=!shopOn; syncShop();
+    if(!shopOn){ closeStation(); hovered=null; hintEl.style.display="none"; }
+  });
 
   function syncSpin(){ btnSpin.setAttribute("aria-pressed", autoSpin?"true":"false"); }
   btnSpin.addEventListener("click",function(){ autoSpin=!autoSpin; syncSpin(); });
@@ -2178,11 +2300,11 @@
       roam.target.copy(station.stand);
       roam.next = 2.5;                       // resume wandering once it ends
     } else if(charging){
-      roam.target.set(0, 0, 8.6);            // dock even with the bay hidden
+      roam.target.set(0, 0, 13.2);           // dock even with the bay hidden
     } else if(roamOn && !idle){
       roam.next -= dt;
       if(roam.next <= 0){
-        var ra = Math.random()*Math.PI*2, rr = 3.0 + Math.random()*2.0;
+        var ra = Math.random()*Math.PI*2, rr = 3.4 + Math.random()*2.8;
         roam.target.set(Math.cos(ra)*rr, 0, Math.sin(ra)*rr);
         roam.next = 6 + Math.random()*9;
       }

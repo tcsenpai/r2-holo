@@ -179,6 +179,40 @@
   .agent-tag.main{padding:5px 11px 6px;}
   .agent-tag.main .what{font-size:13px;}
 
+  /* ---------- workshop stations ---------- */
+  #stations{position:absolute;inset:0;pointer-events:none;z-index:4;}
+  .station-hint{
+    position:absolute;top:0;left:0;display:none;transform-origin:0 0;
+    font-family:var(--f-mono);font-size:9.5px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--proj);
+    background:rgba(5,14,24,.8);border:1px solid var(--line);
+    padding:3px 8px;text-shadow:0 0 8px rgba(3,7,14,.95);white-space:nowrap;
+  }
+  .station-card{
+    position:absolute;top:0;left:0;display:none;transform-origin:0 0;
+    width:250px;pointer-events:auto;
+    background:linear-gradient(180deg, rgba(7,19,32,.96), rgba(5,12,20,.96));
+    border:1px solid var(--line);border-bottom:2px solid var(--proj);
+    padding:11px 13px 12px;backdrop-filter:blur(3px);
+  }
+  .station-card h3{
+    margin:.3em 0 .5em;font-family:var(--f-disp);font-weight:600;
+    font-size:14px;letter-spacing:.02em;color:#eaf7ff;
+  }
+  .station-card .st-body{
+    margin:0 0 9px;font-size:11.5px;line-height:1.55;color:var(--steel);
+  }
+  .station-card .st-tools{
+    font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;
+    color:var(--proj);border-top:1px solid var(--line-soft);padding-top:8px;
+  }
+  #station-close{
+    float:right;margin:-3px -5px 0 8px;background:none;border:0;
+    color:var(--ink-mute);cursor:pointer;font-family:var(--f-mono);
+    font-size:12px;padding:4px 6px;
+  }
+  #station-close:hover{color:var(--proj);}
+
   /* ---------- readout ---------- */
   #readout{
     position:absolute;right:20px;top:50%;translate:0 -50%;width:min(34vw,340px);
@@ -272,6 +306,16 @@
   <div id="emitter"></div>
   <div id="spots"></div>
   <div id="agents"><div id="main-tag" class="agent-tag main"></div></div>
+  <div id="stations">
+    <div id="station-hint" class="station-hint"></div>
+    <div id="station-card" class="station-card">
+      <button id="station-close" aria-label="Close">&#10005;</button>
+      <div class="eyebrow st-kind"></div>
+      <h3 class="st-title"></h3>
+      <p class="st-body"></p>
+      <div class="st-tools"></div>
+    </div>
+  </div>
   <div id="veil"></div>
   <div id="vignette"></div>
   <div id="alarm"></div>
