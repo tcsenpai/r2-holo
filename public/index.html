@@ -152,6 +152,23 @@
   .agent-tag[data-err="1"] .atool{color:#ffc9cd;}
   .agent-tag[data-child="1"] .aser{border-color:rgba(95,240,168,.45);color:var(--good);}
 
+  /* the primary droid gets a proper callout, not just a label */
+  .agent-tag.main{
+    background:rgba(5,14,24,.82);border:1px solid var(--line);
+    border-bottom:2px solid var(--proj);padding:5px 10px 6px;gap:2px;
+    backdrop-filter:blur(2px);
+  }
+  .agent-tag.main .head{
+    font-size:8.5px;letter-spacing:.2em;color:var(--proj-dim);
+  }
+  .agent-tag.main .what{font-size:12px;color:#eaf7ff;letter-spacing:.06em;}
+  .agent-tag.main .secs{font-size:9px;color:var(--ink-mute);}
+  .agent-tag.main[data-mode="run"]{border-bottom-color:var(--good);}
+  .agent-tag.main[data-mode="run"] .head{color:var(--good);}
+  .agent-tag.main[data-mode="wait"]{border-bottom-color:var(--amber);}
+  .agent-tag.main[data-mode="wait"] .head{color:var(--amber);}
+  .agent-tag.main[data-mode="idle"]{opacity:.55;}
+
   /* ---------- readout ---------- */
   #readout{
     position:absolute;right:20px;top:50%;translate:0 -50%;width:min(34vw,340px);
@@ -244,7 +261,7 @@
   <div id="stage"></div>
   <div id="emitter"></div>
   <div id="spots"></div>
-  <div id="agents"></div>
+  <div id="agents"><div id="main-tag" class="agent-tag main"></div></div>
   <div id="veil"></div>
   <div id="vignette"></div>
   <div id="alarm"></div>

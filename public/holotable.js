@@ -621,6 +621,7 @@
       centerLeg:centerLeg, feet:FEET, beam:beam, beamMat:beamMat, topY:topY,
       sparkPos:sparkPos, sparkVel:sparkVel, sparkLife:sparkLife,
       sparkGeo:sparkGeo, sparkMat:sparkMat, SPARK_N:SPARK_N,
+      workPhase:Math.random()*6, gest:null, gestT:0, nextGest:4+Math.random()*8,
       domeCur:0, domeTarget:0, domeVel:0,
       antAng:0, antVel:0, lean:0, pitch:0, recoil:0, dip:0,
       blink:0, nextBlink:2+Math.random()*5, nextSweep:18+Math.random()*20,
@@ -643,14 +644,25 @@
         r2.nextSweep = 20 + Math.random()*25;
       }
     }
+    /* A call in flight holds its module up for its whole duration. Held at a
+       constant value that renders as a frozen pose, which is worse than
+       nothing — so engagement drives a CYCLE: the arm pumps, the dome sweeps,
+       the manipulator strokes. The phase runs faster the busier it is. */
+    r2.workPhase += dt * (1.0 + (m.scp.p + m.man.p + m.sns.p) * 1.9);
+    var ph = r2.workPhase;
+
     var k = 78 + m.sns.p*60, c = 10.5;
     r2.domeVel += (-(r2.domeCur - r2.domeTarget)*k - r2.domeVel*c) * dt;
     r2.domeCur += r2.domeVel * dt;
-    r2.dome.rotation.y = r2.domeCur;
+    // while scanning, the dome sweeps an arc on top of its settled angle
+    var scanAmp = Math.min(0.5, m.sns.p*0.46);
+    r2.dome.rotation.y = r2.domeCur + Math.sin(ph*2.4)*scanAmp;
     r2.dome.rotation.z = damp(r2.dome.rotation.z, clamp(-r2.domeVel*0.016,-0.12,0.12), 9, dt);
+    // thinking reads as small considering tilts, not stillness
+    r2.dome.rotation.x = damp(r2.dome.rotation.x, Math.sin(ph*0.9)*0.07*Math.min(1,m.int.p), 6, dt);
 
     /* --- antennas lag behind: secondary motion is what sells a rig --- */
-    var antT = clamp(-r2.domeVel*0.030, -0.45, 0.45);
+    var antT = clamp(-r2.domeVel*0.030, -0.45, 0.45) + Math.sin(ph*7.0)*0.14*Math.min(1,m.trx.p);
     r2.antVel += (-(r2.antAng - antT)*150 - r2.antVel*8) * dt;
     r2.antAng += r2.antVel * dt;
     r2.antennas.rotation.z = r2.antAng;
@@ -703,16 +715,19 @@
 
     /* --- scomp arm: pops out, spins, eases back --- */
     var sc = Math.min(1, m.scp.p);
-    var scT = 0.90 + easeOutBack(Math.min(1,sc*1.25))*0.32;
+    var stroke = 0.5 + 0.5*Math.sin(ph*4.1);                 // pumping stroke
+    var scT = 0.90 + easeOutBack(Math.min(1,sc*1.25))*(0.16 + stroke*0.20);
     r2.scomp.position.z = damp(r2.scomp.position.z, sc>0.03?scT:0.90, sc>0.03?22:6, dt);
-    r2.scompArm.mesh.rotation.z += sc*22*dt;
+    r2.scomp.rotation.x = Math.sin(ph*4.1 + 0.6)*0.10*sc;
+    r2.scompArm.mesh.rotation.z += sc*(14 + stroke*18)*dt;
     r2.scompArm.lines.rotation.z = r2.scompArm.mesh.rotation.z;
 
     /* --- manipulator: short extension and a fine tremor --- */
     var mn = Math.min(1, m.man.p);
-    r2.manip.position.z = damp(r2.manip.position.z, 0.90 + mn*0.24, mn>0.03?24:6, dt);
-    r2.manip.rotation.z = Math.sin(t*26)*0.05*mn;
-    r2.manip.rotation.x = Math.sin(t*19+1.3)*0.035*mn;
+    var poke = 0.5 + 0.5*Math.sin(ph*5.6);                   // short repeated strokes
+    r2.manip.position.z = damp(r2.manip.position.z, 0.90 + mn*(0.10 + poke*0.18), mn>0.03?24:6, dt);
+    r2.manip.rotation.z = Math.sin(ph*17)*0.05*mn;
+    r2.manip.rotation.x = Math.sin(ph*12+1.3)*0.05*mn;
 
     /* --- sparks fly off whichever tool is active --- */
     var weld = Math.max(m.scp.p, m.man.p*0.75);
@@ -721,7 +736,8 @@
     var ox = onScomp ?  0.30 : -0.30;
     var oy = onScomp ?  2.05 :  1.78;
     var oz = onScomp ?  1.66 :  1.54;
-    var budget = weld > 0.05 ? Math.ceil(weld*4) : 0;
+    var burst = Math.max(0, Math.sin(ph*4.1));               // fires on the stroke
+    var budget = weld > 0.05 ? Math.ceil(weld*7*burst*burst) : 0;
     for(var i=0;i<r2.SPARK_N;i++){
       if(r2.sparkLife[i] > 0){
         r2.sparkLife[i] -= dt;
@@ -746,6 +762,35 @@
       }
     }
     r2.sparkGeo.attributes.position.needsUpdate = true;
+
+    /* --- idle is not stillness: every few seconds the droid does something
+       small. Staggered per droid so a group never moves in unison. --- */
+    if(idle && !reduce){
+      r2.nextGest -= dt;
+      if(r2.nextGest <= 0){
+        r2.gest = ["rock","peek","stretch","settle"][(Math.random()*4)|0];
+        r2.gestT = 0;
+        r2.nextGest = 5 + Math.random()*11;
+      }
+    }
+    if(r2.gest){
+      r2.gestT += dt;
+      var gp = r2.gestT;
+      if(r2.gest === "rock"){
+        r2.group.rotation.z += Math.sin(gp*5.0)*0.035*Math.max(0,1-gp/1.6);
+      } else if(r2.gest === "peek"){
+        if(gp < 0.05) turnDome(r2, (Math.random()<0.5?-1:1)*(0.8+Math.random()*0.9));
+        r2.dome.rotation.x += Math.sin(gp*3.2)*0.08*Math.max(0,1-gp/1.8);
+      } else if(r2.gest === "stretch"){
+        var e2 = Math.sin(Math.min(1,gp/1.4)*Math.PI);
+        r2.scomp.position.z += e2*0.26;
+        r2.scompArm.mesh.rotation.z += e2*4*dt*10;
+        r2.scompArm.lines.rotation.z = r2.scompArm.mesh.rotation.z;
+      } else if(r2.gest === "settle"){
+        r2.squash.scale.y *= 1 - Math.sin(Math.min(1,gp/1.2)*Math.PI)*0.04;
+      }
+      if(r2.gestT > 1.9) r2.gest = null;
+    }
 
     /* --- third leg, and the body rises a touch as it deploys --- */
     var act = idle ? 0 : 1;
@@ -836,13 +881,15 @@
 
     var slot = freeSlot();
     var wrap = new THREE.Group();
+    var anchor = null;
     if(parentId){
       var P = AGENTS[parentId];
       P.kids = (P.kids || 0) + 1;
       var ca = (P.kids-1) * 1.25 + 0.6;
       var cr = 2.7 * (P.targetScale/0.52);
-      wrap.position.set(P.wrap.position.x + Math.cos(ca)*cr, 0,
-                        P.wrap.position.z + Math.sin(ca)*cr);
+      anchor = new THREE.Vector3(Math.cos(ca)*cr, 0, Math.sin(ca)*cr); // vs parent
+      wrap.position.set(P.wrap.position.x + anchor.x, 0,
+                        P.wrap.position.z + anchor.z);
       wrap.rotation.y = -Math.atan2(P.wrap.position.z - wrap.position.z,
                                     P.wrap.position.x - wrap.position.x) + Math.PI/2;
     } else {
@@ -850,6 +897,7 @@
       var R = 5.6;
       wrap.position.set(Math.cos(ang)*R, 0, Math.sin(ang)*R);
       wrap.rotation.y = -ang + Math.PI/2;      // face the centre
+      anchor = wrap.position.clone();          // absolute home
     }
     wrap.scale.setScalar(0.001);
     scene.add(wrap);
@@ -863,7 +911,9 @@
 
     var A = { id:id, wrap:wrap, r2:null, mod:newMod(), lastAt:evTime||Date.now(),
               slot:slot, el:el, dying:false, t:0, clipT:0, kids:0,
-              parent:parentId, series:null, targetScale:0.42, pend:{} };
+              parent:parentId, series:null, targetScale:0.42, pend:{},
+              anchor:anchor, woff:new THREE.Vector3(), rnext:1+Math.random()*4,
+              hd:wrap.rotation.y };
     AGENTS[id] = A;
     buildAgentBody(A, seriesFor(model));
     markShared();
@@ -1293,8 +1343,27 @@
     renderReadout();
   }
 
+  var mainTag=document.getElementById("main-tag");
+  var lastTagKey="";
+  function setMainTag(st){
+    var key = st.mode+"|"+st.label+"|"+st.secs;
+    if(key === lastTagKey) return;              // only touch the DOM on change
+    lastTagKey = key;
+    mainTag.dataset.mode = st.mode;
+    mainTag.innerHTML =
+      '<span class="head">'+st.head+'</span>'+
+      '<span class="what">'+(st.label||"—")+'</span>'+
+      (st.secs > 1 ? '<span class="secs">'+st.secs+'s</span>' : '');
+  }
+
   var tmp=new THREE.Vector3();
   function updateSpots(w,h){
+    tmp.set(0, 5.2, 0); droid.localToWorld(tmp); tmp.project(camera);
+    if(tmp.z>1){ mainTag.style.display="none"; }
+    else {
+      mainTag.style.display="flex";
+      mainTag.style.transform="translate("+((tmp.x*0.5+0.5)*w).toFixed(1)+"px,"+((-tmp.y*0.5+0.5)*h).toFixed(1)+"px)";
+    }
     Object.keys(spotEls).forEach(function(k){
       var s=spotEls[k];
       tmp.copy(s.vec); droid.localToWorld(tmp); tmp.project(camera);
@@ -1660,6 +1729,13 @@
     if(waiting) MOD.int.p = Math.max(MOD.int.p, 0.20);
     var idle = !inflight && !waiting;
 
+    var status = inflight
+      ? { head:"RUNNING", label:inflight.tool, secs:Math.round((nowMs-inflight.at)/1000), mode:"run" }
+      : waiting
+      ? { head:"WAITING ON MODEL", label:live.lastTool, secs:Math.round(sinceLast/1000), mode:"wait" }
+      : { head:"IDLE", label:live.lastTool, secs:0, mode:"idle" };
+    setMainTag(status);
+
     var ex = animateDroid(MAIN, MOD, t, dt, idle);
 
     /* --- patrol: pick a spot, roll to it, park in the middle when idle --- */
@@ -1717,6 +1793,37 @@
       }
       animateDroid(A.r2, A.mod, t, dt, aIdle);
       A.r2.group.position.set(A.r2.shake.x, 0, A.r2.shake.z);
+
+      /* They patrol their own patch too, otherwise they read as frozen next
+         to a primary that moves. A child's patch travels with its parent. */
+      var PA = A.parent && AGENTS[A.parent];
+      var bx = PA ? PA.wrap.position.x + A.anchor.x : A.anchor.x;
+      var bz = PA ? PA.wrap.position.z + A.anchor.z : A.anchor.z;
+      if(!aIdle && !reduce){
+        A.rnext -= dt;
+        if(A.rnext <= 0){
+          A.woff.set((Math.random()-0.5)*1.9, 0, (Math.random()-0.5)*1.9);
+          A.rnext = 4 + Math.random()*7;
+        }
+      } else {
+        A.woff.multiplyScalar(Math.exp(-0.9*dt));
+      }
+      var apx=A.wrap.position.x, apz=A.wrap.position.z;
+      A.wrap.position.x = damp(A.wrap.position.x, bx + A.woff.x, 1.1, dt);
+      A.wrap.position.z = damp(A.wrap.position.z, bz + A.woff.z, 1.1, dt);
+      var avx=(A.wrap.position.x-apx)/Math.max(dt,1e-4);
+      var avz=(A.wrap.position.z-apz)/Math.max(dt,1e-4);
+      var wantY;
+      if(Math.sqrt(avx*avx+avz*avz) > 0.05){
+        wantY = Math.atan2(avx, avz);            // look where you are going
+      } else {                                   // otherwise face who sent you
+        var fx = PA ? PA.wrap.position.x : droid.position.x;
+        var fz = PA ? PA.wrap.position.z : droid.position.z;
+        wantY = Math.atan2(fx - A.wrap.position.x, fz - A.wrap.position.z);
+      }
+      var da = ((wantY - A.hd + Math.PI*3) % (Math.PI*2)) - Math.PI;
+      A.hd += da * (1 - Math.exp(-4*dt));
+      A.wrap.rotation.y = A.hd;
 
       if(nowMs - A.lastAt > AGENT_TTL) A.dying = true;
 
@@ -1796,12 +1903,7 @@
       W.hook.position.y = -2.85 + Math.sin(t*0.5)*0.18;
       W.hook.rotation.y = t*0.25;
       var busy = Math.min(1, MOD.scp.p + MOD.man.p + MOD.sns.p + MOD.int.p*0.5);
-      var st = inflight
-        ? { head:"RUNNING", label:inflight.tool, secs:Math.round((nowMs-inflight.at)/1000), mode:"run" }
-        : waiting
-        ? { head:"WAITING ON MODEL", label:live.lastTool, secs:Math.round(sinceLast/1000), mode:"wait" }
-        : { head:"IDLE", label:live.lastTool, secs:0, mode:"idle" };
-      W.monitor.tick(dt, st, busy, live.events, live.errors);
+      W.monitor.tick(dt, status, busy, live.events, live.errors);
     }
 
     if(scanOn){
