@@ -23,6 +23,17 @@ export function insideRoot(p: string) {
   return r === ROOT || r.startsWith(ROOT + sep);
 }
 
+/**
+ * Split a tail window into lines. The first line is only dropped when the
+ * read was actually truncated (file bigger than the window) — otherwise it
+ * is complete and dropping it would lose a real event on small sessions.
+ */
+export function splitTailLines(text: string, truncated: boolean): string[] {
+  const lines = text.split("\n");
+  if (truncated) lines.shift();   // first line is almost surely cut
+  return lines;
+}
+
 export function streamSession(parentPath: string): Response {
   const subDir = subDirOf(parentPath);
   let watchers: FSWatcher[] = [];
@@ -62,9 +73,7 @@ export function streamSession(parentPath: string): Response {
         const { text, size } = await readTail(parentPath, BACKLOG_PARENT_BYTES);
         parentSize = size;
         tracked.set(parentPath, { offset: size, rest: "" });
-        const lines = text.split("\n");
-        lines.shift();                     // first line is almost surely cut
-        for (const l of lines) backlog.push(...normalize(l));
+        for (const l of splitTailLines(text, size > BACKLOG_PARENT_BYTES)) backlog.push(...normalize(l));
       } catch (e) {
         send("error", { message: String(e) });
       }
@@ -87,10 +96,8 @@ export function streamSession(parentPath: string): Response {
         const fresh = i < BACKLOG_AGENTS && now - mtime < RECENT_MS;
         if (fresh) {
           try {
-            const { text } = await readTail(path, BACKLOG_AGENT_BYTES);
-            const lines = text.split("\n");
-            lines.shift();
-            for (const l of lines) backlog.push(...normalize(l, agent));
+            const { text, size } = await readTail(path, BACKLOG_AGENT_BYTES);
+            for (const l of splitTailLines(text, size > BACKLOG_AGENT_BYTES)) backlog.push(...normalize(l, agent));
           } catch {}
         }
         tracked.set(path, { offset: size, rest: "", agent });

@@ -7,7 +7,12 @@ import { join, resolve } from "node:path";
 import { homedir } from "node:os";
 
 export const ROOT = resolve(join(homedir(), ".claude", "projects"));
-export const PORT = Number(process.env.PORT ?? 4242);
+const portRaw = Number(process.env.PORT ?? 4242);
+export const PORT = Number.isFinite(portRaw) ? portRaw : 4242;
+/** Loopback by default: this server hands out the contents of your Claude
+ *  transcripts, so on a shared network anyone who knows the port could read
+ *  your prompts and project paths. Set HOST to expose it deliberately. */
+export const HOST = process.env.HOST ?? "127.0.0.1";
 export const PUBLIC = join(import.meta.dir, "..", "public");
 
 // Session index

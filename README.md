@@ -2,10 +2,24 @@
 
 A holographic R2-D2 that reacts, live, to what a Claude Code session is doing.
 
+Needs [Bun](https://bun.sh), built against 1.3.14. Nothing to install: Three.js
+is vendored and there are no dependencies.
+
 ```
-bun run server.ts          # http://localhost:4242
+bun run server.ts          # http://127.0.0.1:4242
 PORT=8080 bun run server.ts
+bun test                   # 37 tests
 ```
+
+## Screenshots
+
+<!-- Drop images in docs/img/ and point these at them. GitHub renders the
+     alt text until the file exists, so a missing shot degrades quietly. -->
+
+| | |
+|---|---|
+| ![The bay, idle](docs/img/bay.png) | ![A subagent at a workshop station](docs/img/stations.png) |
+| ![A question, projected](docs/img/question.png) | ![First person](docs/img/first-person.png) |
 
 The dropdown lists the 40 most recently active sessions from `~/.claude/projects`,
 with the title and cwd read out of each transcript rather than decoded from the
@@ -28,6 +42,25 @@ prompts, no tool output, no diffs. Only the shape of what happens.
 
 `/api/stream` rejects any path outside `~/.claude/projects` with a 403.
 
+## Security and privacy
+
+There is no authentication, so the server binds to `127.0.0.1`: on a shared
+network nobody else can reach it. `HOST=0.0.0.0 bun run server.ts` overrides
+that and prints a warning at startup; past that point anyone who can reach the
+port gets everything below.
+
+Even with the content staying on disk, the page still exposes:
+
+- project paths and session titles — a folder called `~/work/layoffs-q3` shows
+  up in the dropdown under that name
+- which tools ran, when, and which ones failed
+- model names, token counts and cost, where the transcript records them
+
+Never read or sent: prompt text, tool output, file contents, diffs.
+
+The session picker is the part to cover if you screen-share: it lists the name
+of every recent project.
+
 ### Subagents write somewhere else
 
 This is the part that is easy to get wrong. A session running subagents writes
@@ -43,6 +76,21 @@ Measured on a live session: in six seconds the parent grew by 606 bytes and the
 three active subagents by 17,800. Watching only the parent means seeing about 3%
 of the work. So the server follows the parent **and** the whole `subagents`
 directory, rescanning every 5 s to pick up agents that spawn mid-session.
+
+## Questions
+
+`AskUserQuestion` and `ExitPlanMode` are the two tools that wait on a human. The
+droid that called one stops, turns to face you and holds up a plate on a cone of
+light: a question bar, a few option rows, a caret walking them. It flickers and
+drops out on purpose — a steady rectangle reads as a label stuck on the screen
+rather than something being projected.
+
+The plate carries no text. The wording stays on disk like everything else, so
+what you get is that there is a question, not what it asks.
+
+Only the asking droid stops. The rest of the bay keeps working, and that
+contrast is the whole point: one unit standing still among moving ones is easy
+to spot.
 
 ## Module mapping
 
@@ -102,14 +150,41 @@ the Info panel says so.
 ## Layout
 
 ```
-server.ts              session index + SSE
+server.ts              compat entry, re-exports server/index.ts
+server/index.ts        HTTP routes
+server/config.ts       host, port, paths, tuning constants
+server/sessions.ts     session discovery and description
+server/stream.ts       SSE endpoint, transcript tailing
+server/transcript.ts   JSONL parsing and event normalisation
+server/subagents.ts    subagent file conventions
+server/fsutil.ts       bounded reads
+shared/protocol.json   the wire contract; server/types.ts mirrors it
+shared/systems.json    R2 subsystem definitions
 public/index.html      layout, palette, info modal
 public/holotable.js    procedural model, rig, reactions
 public/three.min.js    r128, served locally (no CDN)
+tests/                 contract, normalisation, escaping, guards
 ```
+
+Splitting the wire format across two files invites them to drift apart, so
+`tests/contract.test.ts` fails when they do.
 
 Three.js is vendored, so the page works offline. The only external load is
 Google Fonts, and the system fallback stack holds up fine without it.
+
+## Troubleshooting
+
+- **Empty session list** — nothing in `~/.claude/projects` yet, or every
+  transcript is under 1 KB (aborted sessions are skipped).
+- **`EADDRINUSE`** — the port is taken: `PORT=8080 bun run server.ts`.
+- **Blank stage, no droid** — no WebGL. Check `chrome://gpu`, or whether
+  hardware acceleration is switched off.
+- **Nothing on another device** — it only listens on localhost, see above.
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). Three.js r128 is vendored in
+`public/three.min.js`, © 2010-2021 Three.js Authors, also MIT.
 
 ## Notes
 
@@ -124,4 +199,4 @@ here and both are silent:
 
 The geometry is a procedural reconstruction from published specifications and
 the known silhouette, not a scale survey. Star Wars and its droids are the
-property of Lucasfilm Ltd.
+property of Lucasfilm Ltd; this is an unofficial fan project, unaffiliated.

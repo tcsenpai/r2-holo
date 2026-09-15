@@ -109,29 +109,6 @@
   .sysbtn[data-kind="alert"][aria-selected="true"]{border-left-color:var(--amber);}
   .sysbtn[data-kind="alert"][aria-selected="true"] .tag{color:var(--amber);}
 
-  /* ---------- hotspots ---------- */
-  #spots{position:absolute;inset:0;pointer-events:none;z-index:3;}
-  .spot{position:absolute;top:0;left:0;width:0;height:0;pointer-events:auto;}
-  .spot button{
-    position:absolute;translate:-50% -50%;width:24px;height:24px;padding:0;
-    background:none;border:1px solid var(--line);border-radius:50%;
-    cursor:pointer;display:grid;place-items:center;
-    transition:border-color .15s,background .15s,scale .15s;
-  }
-  .spot button::after{content:"";width:5px;height:5px;border-radius:50%;background:var(--proj-dim);transition:background .15s,box-shadow .15s;}
-  .spot button:hover{border-color:var(--proj);scale:1.12;}
-  .spot[data-on="1"] button{border-color:var(--proj);background:rgba(95,227,255,.14);}
-  .spot[data-on="1"] button::after{background:var(--proj);box-shadow:0 0 10px var(--proj);}
-  .spot[data-kind="alert"][data-on="1"] button{border-color:var(--amber);background:rgba(255,180,84,.14);}
-  .spot[data-kind="alert"][data-on="1"] button::after{background:var(--amber);box-shadow:0 0 10px var(--amber);}
-  .spot .lbl{
-    position:absolute;translate:18px -50%;white-space:nowrap;display:none;
-    font-family:var(--f-mono);font-size:10px;letter-spacing:.14em;
-    color:var(--proj);text-shadow:0 0 8px rgba(3,7,14,.9);pointer-events:none;
-  }
-  .spot button:hover ~ .lbl,.spot[data-on="1"] .lbl{display:block;}
-  .spot[data-kind="alert"][data-on="1"] .lbl{color:var(--amber);}
-
   /* ---------- subagent droid tags ---------- */
   #agents{position:absolute;inset:0;pointer-events:none;z-index:3;}
   /* One callout shape for every droid, primary and subagent alike. */
@@ -143,7 +120,9 @@
     background:rgba(5,14,24,.82);border:1px solid var(--line);
     border-bottom:2px solid var(--proj);padding:4px 9px 5px;
     backdrop-filter:blur(2px);transition:opacity .2s;
+    pointer-events:auto;cursor:pointer;
   }
+  .agent-tag:hover{border-color:var(--proj);}
   .agent-tag .head{
     font-size:8.5px;letter-spacing:.18em;color:var(--proj-dim);
     display:flex;align-items:center;gap:5px;
@@ -287,7 +266,6 @@
 <div id="app">
   <div id="stage"></div>
   <div id="emitter"></div>
-  <div id="spots"></div>
   <div id="agents"><div id="main-tag" class="agent-tag main"></div></div>
   <div id="stations">
     <div id="station-hint" class="station-hint"></div>
@@ -316,9 +294,11 @@
     <button class="btn" id="btn-roam" aria-pressed="true">Patrol</button>
     <button class="btn" id="btn-spin" aria-pressed="true">Orbit</button>
     <button class="btn" id="btn-scan" aria-pressed="true">Scan</button>
+    <button class="btn" id="btn-sound" aria-pressed="false">Sound</button>
+    <button class="btn" id="btn-view" aria-pressed="false">View: Orbit</button>
     <button class="btn" id="btn-reset">Reset view</button>
     <button class="btn" id="btn-info" aria-haspopup="dialog">Info</button>
-    <div id="hint">Drag to orbit &middot; scroll to zoom</div>
+    <div id="hint">Drag to orbit &middot; scroll to zoom &middot; WASD to fly, Q/E height, Shift boost, R recenter</div>
   </div>
 
   <div id="scrim" data-open="0">
@@ -350,12 +330,26 @@
         <li><b>block stack</b> &rarr; <span class="code">queue-operation</span>: the real depth of the message queue, growing on enqueue and burning down on dequeue.</li>
         <li><b>amber perimeter</b> &rarr; <span class="code">permission-mode</span>: lit while the session runs under <span class="code">bypassPermissions</span> and is asking nobody.</li>
         <li><b>beam colour</b> &rarr; cache-read against fresh input tokens: cyan while the context is being reused cheaply, amber as it is paid for again.</li>
-        <li><b>sonar ping</b> &rarr; model prose with no subagent behind it: the one event aimed outward, at you, so it gets the one outward gesture.</li>
+        <li><b>sonar ping</b> &rarr; model prose with no subagent behind it: rings leave from the antenna tips, the dome snaps round to face you and keeps scanning while the answer streams, and the callout reads TALKING. Prose arrives block by block, so each block holds the pose a few seconds.</li>
       </ul>
       <p style="margin-top:12px">File paths are the only part of this that touches your filesystem, and they are sent home-relative and never read: the path, not the contents.</p>
 
       <h3>The fleet</h3>
-      <p>Each live subagent gets its own droid, and the series comes from the model behind the event. Canon: the <b>R4</b> is identical to the R2 except its dome is conical rather than hemispherical, and the <b>R5</b> has a shorter cone head and was the cut-price, unreliable unit. So opus runs as an R2, sonnet as an R4, haiku as an R5. The size difference encodes the model tier &mdash; that part is a reading aid, not a canonical dimension.</p>
+      <p>Each live subagent gets its own droid, and the series comes from the model behind the event. Canon: the <b>R4</b> is identical to the R2 except its dome is conical rather than hemispherical, and the <b>R5</b> has a shorter cone head and was the cut-price, unreliable unit. So opus runs as an R2, sonnet as an R4, haiku as an R5. The size difference encodes the model tier &mdash; that part is a reading aid, not a canonical dimension. Click any droid's tag for its readout &mdash; series, model, type, status, tools and tokens; the primary answers to its tag or to a click on its dome.</p>
+
+      <h3>Workshop stations</h3>
+      <p>A tool with a fixture is worked <em>at</em> that fixture: the droid drives over to the bench, the prop mounts on it and the bench lights up. One droid per station &mdash; the primary books first, then subagents in order, and whoever misses out keeps working from its own slot rather than standing inside someone else. When the work runs out a droid holds the spot where it finished instead of trekking back to the middle, swaying gently so it does not read as frozen.</p>
+
+      <h3>When it asks you something</h3>
+      <p>A droid waiting on an answer stops where it is, turns to face you and holds the question up: a plate carried in front of the dome on a cone of light, a question bar over a short list of choices, a caret walking the options. It is an unstable projection on purpose &mdash; scan lines crawl, the beat flickers and occasionally drops out, the whole plate drifts &mdash; because a steady rectangle reads as a label stuck on the screen rather than something the droid is projecting.</p>
+      <p><b>The panel carries no text.</b> The wording of the question never leaves your disk, so what you see is that there <em>is</em> a question and roughly how many ways it can go, not what it says. Only the droid that asked stops; everything else in the bay carries on working, so a stalled unit stands out against the movement rather than freezing the room. Under <span class="code">prefers-reduced-motion</span> the plate holds steady.</p>
+
+      <h3>Moving around</h3>
+      <ul>
+        <li><b>drag</b> to orbit, <b>scroll</b> to zoom, <b>right-click a dome</b> to glide in for a closer look</li>
+        <li><b>WASD</b> or arrows to fly the camera, <b>Q</b>/<b>E</b> for height, <b>Shift</b> to speed up, <b>R</b> to re-centre on the droid</li>
+        <li><b>1</b>/<b>2</b>/<b>3</b> or <b>V</b> for orbit, first person and third person. First rides the primary's eye; third gives you a holographic ball that bumps into the droids and the posts.</li>
+      </ul>
 
       <h3>Nesting is inferred, not read</h3>
       <p>The transcript gives each subagent an <span class="code">agentId</span> and an <span class="code">attributionAgent</span>, but the latter is the agent <em>type</em> (general-purpose, fork) &mdash; there is no parent id anywhere in the format. So when a subagent calls <span class="code">Task</span> and a new agent file appears shortly after, this page attaches the new droid to that one as a child and tethers it there. It is a heuristic based on timing, and it is labelled as such rather than presented as fact.</p>
@@ -366,7 +360,11 @@
         <li><b>green</b> &mdash; logic-display blip, a clean tool_result</li>
         <li><b>red</b> &mdash; logic-display blip, a failed one</li>
         <li><b>amber</b> &mdash; whole-body alarm, the extinguisher firing</li>
+        <li><b>chase</b> &mdash; the dome lamp row running while the model thinks with no call open, or while the only open call is a Task handed to a subagent: green idle, blue waiting on you, amber waiting on the model, red on failure, with a fast flicker across the row on top and a slight sway of the whole droid</li>
       </ul>
+
+      <h3>Sound</h3>
+      <p>Off until you press <span class="code">Sound</span> in the console &mdash; browsers need the gesture. Everything is synthesized live with WebAudio: chirps while it talks and when a subagent spawns, ticks as tools fire (throttled), a low buzz on errors, blips for human turns and connects, room tone underneath. No audio files, nothing licensed. Toggle choices persist in <span class="code">localStorage</span>.</p>
 
       <h3>Sources</h3>
       <ul>
@@ -375,7 +373,8 @@
         <li><a href="https://starwars.fandom.com/wiki/R4_astromech_droid" target="_blank" rel="noopener">Wookieepedia &mdash; R4 astromech droid</a></li>
         <li><a href="https://starwars.fandom.com/wiki/R5_series_astromech_droid" target="_blank" rel="noopener">Wookieepedia &mdash; R5-series astromech droid</a></li>
       </ul>
-      <p class="foot">The geometry is a procedural reconstruction from published specifications and the known silhouette, not a scale survey. Star Wars and its droids are the property of Lucasfilm Ltd.</p>
+      <p class="foot">Served on localhost with no authentication, for one person watching their own machine. Prompts, tool output and file contents are never read; project paths and session titles are, and they show up in the picker.</p>
+      <p class="foot">MIT licensed. Three.js r128 is vendored, &copy; 2010&ndash;2021 Three.js Authors, MIT. The geometry is a procedural reconstruction from published specifications and the known silhouette, not a scale survey. Star Wars and its droids are the property of Lucasfilm Ltd; this is an unofficial fan project with no affiliation.</p>
     </div>
   </div>
 </div>

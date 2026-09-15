@@ -3,6 +3,24 @@
   "version": "0.2.0",
   "type": "module",
   "description": "Holographic R2-D2 reacting live to a Claude Code session (Bun + vanilla JS + vendored Three.js)",
+  "license": "MIT",
+  "author": "tcsenpai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tcsenpai/r2-holo.git"
+  },
+  "homepage": "https://github.com/tcsenpai/r2-holo#readme",
+  "keywords": [
+    "claude-code",
+    "visualization",
+    "three.js",
+    "bun",
+    "sse",
+    "r2-d2"
+  ],
+  "engines": {
+    "bun": ">=1.0.0"
+  },
   "scripts": {
     "start": "bun run server.ts",
     "dev": "PORT=8080 bun run server.ts",

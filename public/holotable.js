@@ -175,6 +175,12 @@
      make the event visible rather than pretending to measure it. */
   var CHARGE_MS = 15000;
   var chargeUntil = 0;
+  /* Talking is a span, not an event: prose arrives one block at a time, so
+     each text block holds the pose for a few seconds and the stream of them
+     keeps it up for the whole answer. */
+  var TALK_MS = 5000;
+  var talkUntil = 0, talkAmt = 0, thinkAmt = 0;
+  var SLEEP_AFTER = 10 * 60 * 1000, sleepAmt = 0;
   var PEND_MAX = 300000;      // give up on an unmatched call after 5 min
   var WAIT_WINDOW = 90000;    // after this, the session is genuinely idle
 
@@ -255,7 +261,18 @@
   scene.fog = new THREE.FogExp2(0x03070e, 0.0085);
   var camera = new THREE.PerspectiveCamera(42, 1, 0.1, 400);
 
-  var renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+  // No WebGL (old browser, hardware acceleration off, headless): say so
+  // instead of leaving a blank stage and an exception in the console.
+  var renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+  } catch(e){
+    stage.innerHTML = '<div style="padding:2rem;color:#9df2ff;font:14px/1.6 system-ui">'+
+      '<strong>WebGL is not available in this browser.</strong><br>'+
+      'The holotable needs it to draw. Check that hardware acceleration is on '+
+      '(chrome://gpu), or try another browser.</div>';
+    return;
+  }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setClearColor(0x000000, 0);
   stage.appendChild(renderer.domElement);
@@ -539,7 +556,7 @@
     dome.add(eye);
 
     // logic display: the red/green blips that report the last result
-    function blipMesh(parent, color, pos, r){
+    function blipMesh(parent, color, pos, r, ry){
       var mm = new THREE.MeshBasicMaterial({
         color:color, transparent:true, opacity:0.07,
         blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide
@@ -548,7 +565,22 @@
         return new THREE.CircleGeometry(r, 14);
       }), mm);
       d.position.set(pos[0],pos[1],pos[2]);
+      d.rotation.y = ry || 0;
       parent.add(d);
+      // halo: a wide faint disc behind the lamp so lit states carry across
+      // the room instead of reading as a pinprick
+      var hm = new THREE.MeshBasicMaterial({
+        color:color, transparent:true, opacity:0,
+        blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide
+      });
+      var h = new THREE.Mesh(geom("blipH"+r, function(){
+        return new THREE.CircleGeometry(r*2.8, 14);
+      }), hm);
+      var nx = Math.sin(ry || 0), nz = Math.cos(ry || 0);
+      h.position.set(pos[0]-nx*0.006, pos[1], pos[2]-nz*0.006);
+      h.rotation.y = ry || 0;
+      parent.add(h);
+      mm.userData.halo = hm;
       return mm;
     }
     /* Status cluster on the dome. One lamp lit at a time, each colour with
@@ -556,13 +588,22 @@
          green  idle, nothing to do      blue  waiting on a human
          amber  waiting on the model     red   something failed
        While a call is actually running no lamp is lit — the callout and the
-       rig itself already say so. */
-    var lampY = Math.max(0.06, eyeY - 0.26), lampZ = eyeZ*0.88;
+       rig itself already say so. While the model is thinking with no call
+       open, a fast chase runs across the whole row on top of the settled
+       levels: amber stays dominant, but the head reads as busy. */
+    /* Two lamp rows on opposite flanks, sitting on the surface and facing
+       outward — the old front row sat inside the hull (radius 0.74 against
+       a 0.89 surface) and read as nothing. Left row: idle, wait; right
+       row: ask, err. Sizes per head so every series wears them on the skin. */
+    var lampY = 0.30, lampR = 0.87;
+    if(headKind === "cone"){ lampY = 0.30; lampR = 0.675; }
+    else if(headKind !== "dome"){ lampY = 0.22; lampR = 0.62; }
+    function flank(a){ return [Math.sin(a)*lampR, lampY, Math.cos(a)*lampR]; }
     var lamps = {
-      idle: blipMesh(dome, GOOD,     [-0.255, lampY, lampZ], 0.05),
-      wait: blipMesh(dome, 0xffb454, [-0.085, lampY, lampZ], 0.05),
-      ask:  blipMesh(dome, 0x6fa8ff, [ 0.085, lampY, lampZ], 0.05),
-      err:  blipMesh(dome, BAD,      [ 0.255, lampY, lampZ], 0.05)
+      idle: blipMesh(dome, GOOD,     flank(-0.68), 0.062, -0.68),
+      wait: blipMesh(dome, 0xffb454, flank(-0.96), 0.062, -0.96),
+      ask:  blipMesh(dome, 0x6fa8ff, flank( 0.68), 0.062,  0.68),
+      err:  blipMesh(dome, BAD,      flank( 0.96), 0.062,  0.96)
     };
     // the body logic display stays a neutral activity chase
     var logic = [];
@@ -688,7 +729,11 @@
      animateDroid — the same rig drives the primary and every subagent
      ------------------------------------------------------------------- */
   var tmpColor = new THREE.Color();
-  function animateDroid(r2, m, t, dt, idle){
+  function animateDroid(r2, m, t, dt, idle, talk, think){
+    talk = talk || 0;
+    think = think || 0;
+    // while talking the head scans instead of settling: R2 thinking out loud
+    if(talk > 0.01 && !reduce) r2.domeTarget += talk * dt * 1.7;
     /* --- dome: an under-damped spring. A linear lerp turns the head
        like a turntable; a real astromech snaps it and lets it settle. */
     if(idle && !reduce){
@@ -717,7 +762,8 @@
     r2.dome.rotation.x = damp(r2.dome.rotation.x, Math.sin(ph*0.9)*0.07*Math.min(1,m.int.p), 6, dt);
 
     /* --- antennas lag behind: secondary motion is what sells a rig --- */
-    var antT = clamp(-r2.domeVel*0.030, -0.45, 0.45) + Math.sin(ph*7.0)*0.14*Math.min(1,m.trx.p);
+    var antT = clamp(-r2.domeVel*0.030, -0.45, 0.45) + Math.sin(ph*7.0)*0.14*Math.min(1,m.trx.p)
+               + Math.sin(ph*9.0)*0.12*talk;
     r2.antVel += (-(r2.antAng - antT)*150 - r2.antVel*8) * dt;
     r2.antAng += r2.antVel * dt;
     r2.antennas.rotation.z = r2.antAng;
@@ -728,7 +774,9 @@
     if(r2.nextBlink <= 0){ r2.blink = 1; r2.nextBlink = 2.5 + Math.random()*6; }
     r2.blink = Math.max(0, r2.blink - dt*7);
     var eyeBase = 0.30 + m.sns.p*0.60 + (idle?0:0.10);
-    r2.eyeMat.opacity = Math.max(0.04, eyeBase * (1 - r2.blink*0.9));
+    // speaking warble on the eye while talking
+    var warble = 1 - talk*0.28*(0.5+0.5*Math.sin(t*23));
+    r2.eyeMat.opacity = Math.max(0.04, eyeBase * (1 - r2.blink*0.9) * warble);
 
     /* --- logic display: a green blip on a clean result, red on a failure,
        plus a slow idle chase so the row never looks dead --- */
@@ -736,21 +784,36 @@
     r2.bad  = Math.max(0, r2.bad  - dt*2.2);
     // each lamp breathes at its own rate: idle slow, error urgent
     var breathe = { idle:1.1, wait:3.1, ask:2.2, err:7.0 };
-    ["idle","wait","ask","err"].forEach(function(kk){
+    ["idle","wait","ask","err"].forEach(function(kk, ki){
+      var lm = r2.lamps[kk];
       var lv = r2.lamp[kk];
-      r2.lamps[kk].opacity = 0.03 + lv * (0.32 + 0.36*(0.5+0.5*Math.sin(t*breathe[kk])));
+      // thinking chase: while the model works with no call open, the whole
+      // row runs a fast random chase over the settled levels, so amber stays
+      // dominant (still "waiting on the model") but the head reads as busy
+      var flick = 0;
+      if(think > 0.01 && !reduce){
+        flick = think * Math.max(0, Math.sin(t*11 - ki*1.7)) * (0.35 + Math.random()*0.45);
+      }
+      var lop = 0.05 + Math.min(1, lv + flick) * (0.65 + 0.55*(0.5+0.5*Math.sin(t*breathe[kk])));
+      lm.opacity = Math.min(1, lop);
+      lm.userData.halo.opacity = Math.min(1, lop) * 0.38;
     });
-    var actLvl = Math.min(1, r2.good + r2.bad + m.scp.p + m.man.p);
+    var actLvl = Math.min(1, r2.good + r2.bad + m.scp.p + m.man.p + talk*0.8);
     for(var bi=0; bi<r2.logic.length; bi++){
       var chase = Math.max(0, Math.sin(t*2.6 - bi*0.9));
-      r2.logic[bi].opacity = 0.04 + chase*(0.08 + actLvl*0.22);
+      var bop = 0.05 + chase*(0.12 + actLvl*0.55);
+      r2.logic[bi].opacity = Math.min(1, bop);
+      r2.logic[bi].userData.halo.opacity = Math.min(1, bop) * 0.35;
     }
 
     /* --- weight: the body leans toward the working arm and dips as an
        action starts. Both pivot at the ground, so the feet stay put. --- */
     var leanT = (m.scp.p*0.050) - (m.man.p*0.050);
     r2.lean = damp(r2.lean, clamp(leanT,-0.07,0.07), 7, dt);
-    r2.group.rotation.z = r2.lean;
+    // gentle sway while talking or thinking: reads at a glance, and tells a
+    // dead rig apart from subtle lamps when diagnosing by eye
+    var sway = reduce ? 0 : Math.sin(ph*1.7)*0.025*Math.max(talk, think);
+    r2.group.rotation.z = r2.lean + sway;
 
     var load = Math.min(1, m.scp.p + m.man.p);
     r2.dip = damp(r2.dip, load*0.035, 9, dt);
@@ -973,7 +1036,11 @@
               slot:slot, el:el, dying:false, t:0, clipT:0, kids:0,
               parent:parentId, series:null, targetScale:0.42, pend:{},
               anchor:anchor, woff:new THREE.Vector3(), rnext:1+Math.random()*4,
-              hd:wrap.rotation.y, props:{} };
+              atStation:false,
+              hd:wrap.rotation.y, props:{},
+              model:null, atype:null, lastTool:"—", tokens:0, tools:0,
+              errors:0, firstAt:Date.now(), mode:"idle", secs:0 };
+    el.addEventListener("click", function(){ showAgent(id); });
     AGENTS[id] = A;
     buildAgentBody(A, seriesFor(model));
     markShared();
@@ -1256,9 +1323,11 @@
       });
       // A holo column at the heart of the bay, with the droids working
       // around it. Open-ended and translucent, so it never blocks a sightline.
-      var COL_R = 1.7, COL_H = 7.4;
+      // Taller than the room and lifted off the floor: droids pass underneath
+      // and the sightline at droid height stays clear.
+      var COL_R = 1.7, COL_H = 9.5, COL_BASE = 5.2;
       var column = new THREE.Group();
-      column.position.set(0, 0.10, 0);
+      column.position.set(0, COL_BASE, 0);
       scene.add(column);                    // outside the workshop: always on
       var band = new THREE.Mesh(
         new THREE.CylinderGeometry(COL_R, COL_R, COL_H, 40, 1, true), mat);
@@ -1658,7 +1727,23 @@
     return out;
   })();
   var SONAR_DUR = 2.0;
-  var sonarReq = false, sonarT0 = -99, sonarX = 0, sonarZ = 0;
+  var sonarReq = false, sonarT0 = -99, sonarX = 0, sonarY = 0, sonarZ = 0;
+
+  /* --- footprints: faint heat where the primary walked, gone in seconds.
+     Same language as the sonar rings, kept barely visible on purpose. */
+  var TRAIL_N = 10, TRAIL_LIFE = 4;
+  var TRAIL = (function(){
+    var g = ringGeo(48, false), out = [];
+    for(var k=0;k<TRAIL_N;k++){
+      var m = lineMaterial(PROJ, 0);
+      var o = new THREE.LineSegments(g, m);
+      o.visible = false;
+      scene.add(o);
+      out.push({obj:o, mat:m, life:0});
+    }
+    return out;
+  })();
+  var trailAcc = 0;
 
   /* --- turn rings: a record of how long each turn took ----------------
      system/turn_duration carries a real durationMs. Each closed turn drops
@@ -1737,13 +1822,150 @@
      turns to face where it is going and banks into the corners. */
   var roam = {
     pos:new THREE.Vector3(), target:new THREE.Vector3(),
-    heading:0, bank:0, next:0, speed:0
+    heading:0, bank:0, next:0, speed:0,
+    // where it stopped when the work ran out: held so it stays put instead
+    // of drifting (damping toward a live pos never quite settles)
+    hold:new THREE.Vector3(), held:false
   };
   var roamOn = !reduce;
 
   var cam = {theta:0.62, phi:1.07, radius:31, target:new THREE.Vector3(0,3.4,0)};
   var HOME = {theta:0.62, phi:1.07, radius:31};
   var autoSpin = !reduce;
+  var camGoal = null;   // right-click focus: chased for a few seconds, then released
+  var prevClaimed = {}; // last frame's fixture bookings, for the bench lights
+
+  /* --- first / third person --------------------------------------------
+     Orbit is the default. First glues the camera to the primary's eye and
+     drag looks around. Third spawns you as a holo ball: WASD/arrows drive
+     it camera-relative, the camera follows it, hand-written physics only
+     (floor clamp + circle push-outs, nothing more). */
+  var viewMode = "orbit";
+  var VIEW_LABEL = { orbit:"Orbit", first:"1st", third:"3rd" };
+  var keys = {};
+  // orbit freefly: WASD/QE slide cam.target on its own. Touching a drive key
+  // takes the target off the auto-follow (3265) — otherwise the two fight.
+  // Re-anchors on Home/R, or when leaving orbit.
+  var flyOn = false;
+  var flyVel = new THREE.Vector3();
+  var FLY_ACCEL = 34, FLY_MAXV = 16, FLY_DRAG = 5, FLY_BOUND = 40, FLY_Y = [0.6, 26];
+  var fpYaw = 0, fpPitch = 0;
+  var BALL_R = 0.35, BALL_BOUND = 15, BALL_ACCEL = 16, BALL_MAXV = 7;
+  var me = { pos:new THREE.Vector3(4, BALL_R, 4), vel:new THREE.Vector3() };
+  var meGroup = new THREE.Group();
+  meGroup.add(new THREE.Mesh(
+    new THREE.SphereGeometry(BALL_R, 18, 12),
+    new THREE.MeshBasicMaterial({ color:0x9df2ff, transparent:true, opacity:0.85,
+      blending:THREE.AdditiveBlending, depthWrite:false })));
+  meGroup.add(new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.SphereGeometry(BALL_R*1.45, 10, 8)),
+    lineMaterial(PROJ, 0.5)));
+  meGroup.visible = false;
+  scene.add(meGroup);
+  var POSTS = [[-15.5,-15.5],[15.5,-15.5],[-15.5,15.5],[15.5,15.5],
+               [0,-16.5],[0,16.5],[-16.5,0],[16.5,0]];
+  function setView(m){
+    viewMode = m;
+    flyRelease();   // freefly is orbit-only; never carry it across a mode switch
+    camGoal = null; // nor a right-click focus: it would keep writing cam.target
+    btnView.textContent = "View: " + VIEW_LABEL[m];
+    btnView.setAttribute("aria-pressed", m === "orbit" ? "false" : "true");
+    meGroup.visible = (m === "third");
+    // one walker for both modes: first starts at the droid and walks with
+    // WASD like third does, only the camera differs
+    if(m === "first"){
+      me.pos.set(droid.position.x, BALL_R, droid.position.z);
+      me.vel.set(0, 0, 0);
+      fpYaw = Math.atan2(cam.target.x - camera.position.x, cam.target.z - camera.position.z);
+      fpPitch = 0;
+    }
+    camera.fov = (m === "first") ? 48 : 42;
+    camera.updateProjectionMatrix();
+  }
+  function collideXZ(cx, cz, rad){
+    var dx = me.pos.x-cx, dz = me.pos.z-cz, rr = rad + BALL_R;
+    var d2 = dx*dx + dz*dz;
+    if(d2 < rr*rr && d2 > 1e-8){
+      var d = Math.sqrt(d2), nx = dx/d, nz = dz/d;
+      me.pos.x = cx + nx*rr; me.pos.z = cz + nz*rr;
+      var vn = me.vel.x*nx + me.vel.z*nz;   // slide along the edge
+      if(vn < 0){ me.vel.x -= nx*vn; me.vel.z -= nz*vn; }
+    }
+  }
+  var stepTmpF = new THREE.Vector3(), stepTmpR = new THREE.Vector3();
+  function stepMe(dt, t){
+    var ix = ((keys.KeyD || keys.ArrowRight) ? 1 : 0) - ((keys.KeyA || keys.ArrowLeft) ? 1 : 0);
+    var iz = ((keys.KeyW || keys.ArrowUp) ? 1 : 0) - ((keys.KeyS || keys.ArrowDown) ? 1 : 0);
+    stepTmpF.copy(cam.target).sub(camera.position); stepTmpF.y = 0;
+    if(stepTmpF.lengthSq() < 1e-6) stepTmpF.set(0, 0, 1);
+    stepTmpF.normalize();
+    stepTmpR.set(-stepTmpF.z, 0, stepTmpF.x);
+    me.vel.addScaledVector(stepTmpF, iz*BALL_ACCEL*dt);
+    me.vel.addScaledVector(stepTmpR, ix*BALL_ACCEL*dt);
+    me.vel.multiplyScalar(Math.exp(-4*dt));
+    var sp = Math.sqrt(me.vel.x*me.vel.x + me.vel.z*me.vel.z);
+    if(sp > BALL_MAXV){ me.vel.x *= BALL_MAXV/sp; me.vel.z *= BALL_MAXV/sp; }
+    me.pos.x += me.vel.x*dt; me.pos.z += me.vel.z*dt;
+    // no column collision: it floats at COL_BASE 5.2 so you walk underneath
+    collideXZ(droid.position.x, droid.position.z, 1.3);    // primary
+    Object.keys(AGENTS).forEach(function(id){
+      var A = AGENTS[id];
+      collideXZ(A.wrap.position.x, A.wrap.position.z, 1.0);
+    });
+    for(var pi=0; pi<POSTS.length; pi++) collideXZ(POSTS[pi][0], POSTS[pi][1], 0.6);
+    var dc = Math.sqrt(me.pos.x*me.pos.x + me.pos.z*me.pos.z);   // outer bound
+    if(dc > BALL_BOUND - BALL_R){
+      me.pos.x *= (BALL_BOUND - BALL_R)/dc; me.pos.z *= (BALL_BOUND - BALL_R)/dc;
+      var onx = me.pos.x/dc, onz = me.pos.z/dc;
+      var ovn = me.vel.x*onx + me.vel.z*onz;
+      if(ovn > 0){ me.vel.x -= onx*ovn; me.vel.z -= onz*ovn; }
+    }
+    me.pos.y = BALL_R + Math.abs(Math.sin(t*3))*0.03*Math.min(1, sp);
+    meGroup.position.copy(me.pos);
+    meGroup.rotation.y += sp*dt*1.5;
+  }
+
+  /* Freefly for orbit: slides cam.target itself, so the existing spherical
+     rig keeps working — drag still orbits, wheel still zooms, we only move
+     what they orbit around. Forward comes from the camera's own facing so
+     "forward" is always where you look. */
+  var flyTmpF = new THREE.Vector3(), flyTmpR = new THREE.Vector3();
+  function flyInput(){
+    return {
+      x: ((keys.KeyD || keys.ArrowRight) ? 1 : 0) - ((keys.KeyA || keys.ArrowLeft) ? 1 : 0),
+      z: ((keys.KeyW || keys.ArrowUp) ? 1 : 0) - ((keys.KeyS || keys.ArrowDown) ? 1 : 0),
+      y: ((keys.KeyE || keys.Space) ? 1 : 0) - ((keys.KeyQ || keys.ShiftLeft || keys.ShiftRight) ? 1 : 0)
+    };
+  }
+  function stepFly(dt){
+    var i = flyInput();
+    if(i.x || i.z || i.y) flyOn = true;      // first key press takes the wheel
+    if(!flyOn) return;
+    // ground-plane basis from where the camera looks, so W goes into the screen
+    flyTmpF.copy(cam.target).sub(camera.position); flyTmpF.y = 0;
+    if(flyTmpF.lengthSq() < 1e-6) flyTmpF.set(0, 0, 1);
+    flyTmpF.normalize();
+    flyTmpR.set(-flyTmpF.z, 0, flyTmpF.x);
+    var boost = (keys.ShiftLeft || keys.ShiftRight) && !i.y ? 2.4 : 1;
+    flyVel.addScaledVector(flyTmpF, i.z*FLY_ACCEL*boost*dt);
+    flyVel.addScaledVector(flyTmpR, i.x*FLY_ACCEL*boost*dt);
+    flyVel.y += i.y*FLY_ACCEL*0.7*dt;
+    flyVel.multiplyScalar(Math.exp(-FLY_DRAG*dt));
+    var sp = flyVel.length();
+    if(sp > FLY_MAXV*boost) flyVel.multiplyScalar(FLY_MAXV*boost/sp);
+    cam.target.addScaledVector(flyVel, dt);
+    // keep the target in the room: clamp height, rein in the horizontal drift
+    cam.target.y = clamp(cam.target.y, FLY_Y[0], FLY_Y[1]);
+    if(cam.target.y === FLY_Y[0] || cam.target.y === FLY_Y[1]) flyVel.y = 0;
+    var dc = Math.sqrt(cam.target.x*cam.target.x + cam.target.z*cam.target.z);
+    if(dc > FLY_BOUND){
+      cam.target.x *= FLY_BOUND/dc; cam.target.z *= FLY_BOUND/dc;
+      var nx = cam.target.x/dc, nz = cam.target.z/dc;
+      var vn = flyVel.x*nx + flyVel.z*nz;
+      if(vn > 0){ flyVel.x -= nx*vn; flyVel.z -= nz*vn; }
+    }
+  }
+  function flyRelease(){ flyOn = false; flyVel.set(0, 0, 0); }
 
   function applyCamera(){
     cam.phi = clamp(cam.phi, 0.22, Math.PI-0.22);
@@ -1762,18 +1984,35 @@
     el.setPointerCapture(e.pointerId); drag={x:e.clientX,y:e.clientY};
     pressAt = performance.now(); pressX = e.clientX; pressY = e.clientY;
     autoSpin=false; syncSpin();
+    if(e.button === 2){
+      // right click on the dome: glide over for a closer look, left stays info.
+      // Orbit only — in first person the drag is already looking around.
+      if(viewMode === "orbit" && pickDroid(e.clientX, e.clientY)){
+        camGoal = { x:droid.position.x, z:droid.position.z, r:14, until:performance.now()+6000 };
+      }
+    } else {
+      camGoal = null;
+    }
   });
+  el.addEventListener("contextmenu",function(e){ e.preventDefault(); });
   el.addEventListener("pointermove",function(e){
     if(!drag){                                  // hover: name the fixture
       var h = pickAt(e.clientX, e.clientY);
+      var dh = h ? null : pickDroid(e.clientX, e.clientY);
       hovered = h;
-      el.style.cursor = h ? "pointer" : "grab";
+      el.style.cursor = (h || dh) ? "pointer" : "grab";
       if(h){
         hintEl.textContent = h.userData.info.title;
         hintEl.dataset.cx = e.clientX; hintEl.dataset.cy = e.clientY;
       } else {
         hintEl.style.display = "none";
       }
+      return;
+    }
+    if(viewMode === "first"){   // drag looks around from the droid's eye
+      fpYaw -= (e.clientX-drag.x)*0.005;
+      fpPitch = clamp(fpPitch - (e.clientY-drag.y)*0.005, -1.2, 1.2);
+      drag.x=e.clientX; drag.y=e.clientY;
       return;
     }
     cam.theta -= (e.clientX-drag.x)*0.006;
@@ -1787,13 +2026,16 @@
     var moved = Math.abs(e.clientX-pressX) + Math.abs(e.clientY-pressY);
     if(performance.now()-pressAt < 300 && moved < 6){
       var h = pickAt(e.clientX, e.clientY);
-      if(h) openStation(h); else closeStation();
+      if(h) openStation(h);
+      else if(pickDroid(e.clientX, e.clientY)) showAgent("main");
+      else closeStation();
     }
   }
   el.addEventListener("pointerup",endDrag);
   el.addEventListener("pointercancel",endDrag);
   el.addEventListener("wheel",function(e){
     e.preventDefault();
+    camGoal = null;
     cam.radius *= (1+Math.sign(e.deltaY)*0.09); applyCamera();
   },{passive:false});
   el.addEventListener("touchmove",function(e){
@@ -1822,7 +2064,23 @@
     var hits = ray.intersectObjects(PICKS, false);
     return hits.length ? hits[0].object : null;
   }
+  /* The primary has no always-visible tag, so its head is the button:
+     any visible droid mesh counts, dead particles and hidden props don't. */
+  function pickDroid(cx, cy){
+    var r = el.getBoundingClientRect();
+    ndc.x =  ((cx - r.left)/r.width)*2 - 1;
+    ndc.y = -((cy - r.top)/r.height)*2 + 1;
+    ray.setFromCamera(ndc, camera);
+    var hits = ray.intersectObjects(droid.children, true).filter(function(h){
+      // faded-out halos stay in the scene: don't let them catch clicks
+      var m = h.object.material;
+      if(m && m.transparent && m.opacity < 0.05) return false;
+      return h.object.visible !== false && !h.object.isPoints;
+    });
+    return hits.length ? hits[0].object : null;
+  }
   function openStation(obj){
+    agentView = null;
     openPick = obj;
     stationView = obj.userData.info;
     Object.keys(railEls).forEach(function(k){    // no subsystem is selected now
@@ -1837,17 +2095,16 @@
   }
 
   /* ===================================================================
-     7. RAIL, HOTSPOTS, READOUT
+     7. RAIL, READOUT
      =================================================================== */
   var rail=document.getElementById("rail");
-  var spotsLayer=document.getElementById("spots");
   var readout=document.getElementById("readout");
 
   var head=document.createElement("div");
   head.className="eyebrow rail-h"; head.textContent="Subsystems";
   rail.appendChild(head);
 
-  var active=SYSTEMS[0].id, railEls={}, spotEls={};
+  var active=SYSTEMS[0].id, railEls={};
 
   SYSTEMS.forEach(function(sys){
     var b=document.createElement("button");
@@ -1857,20 +2114,26 @@
     b.addEventListener("click",function(){ select(sys.id); });
     rail.appendChild(b);
     railEls[sys.id]=b;
-
-    var holder=document.createElement("div");
-    holder.className="spot"; holder.dataset.kind=sys.kind; holder.dataset.id=sys.id;
-    var hb=document.createElement("button");
-    hb.setAttribute("aria-label",sys.title);
-    hb.addEventListener("click",function(){ select(sys.id); });
-    var lbl=document.createElement("span");
-    lbl.className="lbl"; lbl.textContent=sys.label;
-    holder.appendChild(hb); holder.appendChild(lbl);
-    spotsLayer.appendChild(holder);
-    spotEls[sys.id]={holder:holder, vec:new THREE.Vector3(sys.anchor[0],sys.anchor[1],sys.anchor[2])};
   });
 
   function fmtN(n){ return n.toLocaleString("en-US"); }
+  /* Transcript-controlled strings (tool names, paths, model ids) end up in
+     innerHTML below. Same-user local data, but escape anyway: a hostile
+     transcript must not become script in the page. */
+  function esc(s){
+    return String(s ?? "").replace(/[&<>"']/g, function(c){
+      return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+    });
+  }
+  /* One droid per workshop fixture. A bench is takeable when nobody has
+     booked it yet this frame AND last frame's holder is us or gone — the
+     second half is what stops two subagents wanting the same bench from
+     trading it every frame and jittering between the two spots.
+     `now`/`prev` are the holder ids ("main" for the primary), or undefined. */
+  function canClaim(now, prev, id){
+    return (now === undefined || now === id) &&
+           (prev === undefined || prev === id);
+  }
   function fleetSummary(){
     var c={r2:0,r4:0,r5:0};
     Object.keys(AGENTS).forEach(function(id){ c[AGENTS[id].series] = (c[AGENTS[id].series]||0)+1; });
@@ -1886,17 +2149,17 @@
   function sessionRows(){
     return '<div class="eyebrow live-h">Session</div>'+
       '<dl class="specs">'+
-        '<dt>Last tool</dt><dd>'+live.lastTool+'</dd>'+
-        '<dt>Model</dt><dd>'+live.model+'</dd>'+
+        '<dt>Last tool</dt><dd>'+esc(live.lastTool)+'</dd>'+
+        '<dt>Model</dt><dd>'+esc(live.model)+'</dd>'+
         '<dt>Fleet</dt><dd>'+fleetSummary()+'</dd>'+
         '<dt>Cache hit</dt><dd>'+Math.round(cacheRatio()*100)+'%</dd>'+
-        '<dt>Effort</dt><dd>'+live.effort+' &middot; '+live.speed+'</dd>'+
-        '<dt>Permissions</dt><dd>'+live.perm+'</dd>'+
+        '<dt>Effort</dt><dd>'+esc(live.effort)+' &middot; '+esc(live.speed)+'</dd>'+
+        '<dt>Permissions</dt><dd>'+esc(live.perm)+'</dd>'+
         '<dt>Queue</dt><dd>'+live.queue+'</dd>'+
         '<dt>Turns</dt><dd>'+fmtN(live.turns)+
           (live.turnMs ? ' <span class="mute">(last '+(live.turnMs/1000).toFixed(1)+'s)</span>' : '')+'</dd>'+
         '<dt>Files touched</dt><dd>'+fmtN(live.files)+'</dd>'+
-        '<dt>Last file</dt><dd>'+live.lastFile+'</dd>'+
+        '<dt>Last file</dt><dd>'+esc(live.lastFile)+'</dd>'+
         '<dt>Events</dt><dd>'+fmtN(live.events)+'</dd>'+
         '<dt>Errors</dt><dd>'+fmtN(live.errors)+'</dd>'+
         '<dt>From subagents</dt><dd>'+fmtN(live.sidechains)+'</dd>'+
@@ -1910,8 +2173,61 @@
 
   var CLOSE_BTN = '<button id="readout-close" aria-label="Close panel">&#10005;</button>';
 
+  /* Droid view: clicking a tag (subagent or primary) parks the panel on
+     that droid instead of a subsystem. Rail selection and station picks
+     both clear it. */
+  var agentView = null;   // null = subsystem view, "main" or an agent id
+  function showAgent(id){
+    stationView = null; openPick = null;
+    agentView = id;
+    showReadout(true);
+    renderReadout();
+  }
+  function renderAgent(){
+    if(agentView !== "main" && !AGENTS[agentView]){
+      readout.dataset.kind = "std";
+      readout.innerHTML = CLOSE_BTN+
+        '<div class="eyebrow">Fleet &middot; faded</div>'+
+        '<h2>Droid gone</h2>'+
+        '<p class="note">This droid faded out after 60 s of silence. The session block below keeps the run totals.</p>'+
+        sessionRows();
+      return;
+    }
+    var isMain = agentView === "main";
+    var A = isMain ? null : AGENTS[agentView];
+    var S = isMain ? { label:"R2" } : SERIES[A.series] || SERIES.r2;
+    var st = isMain
+      ? (lastMainStatus || { head:"IDLE", label:live.lastTool, secs:0, mode:"idle" })
+      : { head:A.mode.toUpperCase(), label:A.mode === "run" ? A.lastTool : A.mode, secs:A.secs, mode:A.mode };
+    var since = isMain ? live.lastAt : A.firstAt;
+    readout.dataset.kind = st.mode === "wait" ? "alert" : "std";
+    readout.innerHTML = CLOSE_BTN+
+      '<div class="eyebrow">Fleet &middot; '+(isMain ? "primary" : "subagent "+esc(agentView))+'</div>'+
+      '<h2>'+(isMain ? "R2 primary" : S.label+" "+esc(agentView))+'</h2>'+
+      '<p class="note">'+(isMain
+        ? "The full-size droid working your session directly."
+        : "A live subagent, sized by model tier. Nesting is inferred from timing, not read from the transcript.")+'</p>'+
+      '<dl class="specs">'+
+        '<dt>Status</dt><dd>'+esc(st.head)+(st.secs > 1 ? ' <span class="mute">('+st.secs+'s)</span>' : '')+'</dd>'+
+        (isMain
+          ? '<dt>Model</dt><dd>'+esc(live.model)+'</dd>'
+          : '<dt>Series</dt><dd>'+esc(S.label)+'</dd>'+
+            '<dt>Model</dt><dd>'+esc(A.model || "—")+'</dd>'+
+            '<dt>Type</dt><dd>'+esc(A.atype || "—")+'</dd>'+
+            '<dt>Parent</dt><dd>'+(A.parent ? esc(A.parent) : "primary")+'</dd>'+
+            '<dt>Children</dt><dd>'+fmtN(A.kids)+'</dd>')+
+        (isMain ? "" : '<dt>Last tool</dt><dd>'+esc(A.lastTool)+'</dd>')+
+        (isMain ? "" : '<dt>Tools</dt><dd>'+fmtN(A.tools)+'</dd>')+
+        (isMain ? "" : '<dt>Tokens</dt><dd>'+fmtN(A.tokens)+'</dd>')+
+        (isMain ? "" : '<dt>Errors</dt><dd>'+fmtN(A.errors)+'</dd>')+
+        '<dt>Active since</dt><dd>'+(since ? rel(since) : "—")+'</dd>'+
+      '</dl>'+
+      sessionRows();
+  }
+
   function renderReadout(){
     if(stationView){ renderStation(); return; }
+    if(agentView){ renderAgent(); return; }
     var sys=SYSTEMS.filter(function(s){return s.id===active;})[0];
     var m=MOD[sys.id];
     var rows=sys.specs.map(function(p){ return "<dt>"+p[0]+"</dt><dd>"+p[1]+"</dd>"; }).join("");
@@ -1950,33 +2266,54 @@
     readoutOpen = on;
     readout.style.display = on ? "" : "none";
     if(btnPanel) btnPanel.setAttribute("aria-pressed", on ? "true" : "false");
+    savePrefs();
   }
   readout.addEventListener("click", function(e){
     if(e.target.closest && e.target.closest("#readout-close")) showReadout(false);
   });
+  /* Curious look: opening a subsystem turns the dome toward that module,
+     as if pointing it out. Yaw is droid-local (the modules ride the hull),
+     shortest way round; any later turnDome overrides it. */
+  var LOOK = { sns:0, trx:0, scp:0.55, man:-0.55, vck:-0.6, ext:0.65,
+               int:Math.PI, loc:Math.PI };
   function select(id){
-    stationView = null; openPick = null;
+    stationView = null; openPick = null; agentView = null;
     showReadout(true);
     active=id;
+    if(!reduce && LOOK[id] !== undefined){
+      var want = LOOK[id] - MAIN.domeTarget;
+      turnDome(MAIN, ((want + Math.PI*3) % (Math.PI*2)) - Math.PI);
+    }
     Object.keys(railEls).forEach(function(k){
       railEls[k].setAttribute("aria-selected", k===id ? "true":"false");
-    });
-    Object.keys(spotEls).forEach(function(k){
-      spotEls[k].holder.dataset.on = k===id ? "1":"0";
     });
     renderReadout();
   }
 
   var mainTag=document.getElementById("main-tag");
-  var lastTagKey="";
+  mainTag.addEventListener("click", function(){ showAgent("main"); });
+  var lastTagKey="", lastMainStatus=null;
+  function droidSpeak(){
+    var out = [], n = 2 + Math.floor(Math.random()*3);
+    for(var i=0;i<n;i++){
+      var m = 1 + Math.floor(Math.random()*4), g = "";
+      for(var j=0;j<m;j++) g += Math.random() < 0.5 ? "\u00b7" : "\u2212";
+      out.push(g);
+    }
+    return out.join(" ");
+  }
   function setMainTag(st){
+    lastMainStatus = st;
     // The callout only speaks when the droid is actually doing something.
     // Waiting is the hull lamp's job; idle needs no caption at all.
     if(st.mode !== "run"){
       if(lastTagKey !== "off"){ lastTagKey = "off"; mainTag.dataset.off = "1"; }
       return;
     }
-    var key = st.mode+"|"+st.label+"|"+st.secs;
+    // R2 doesn't speak Basic: while replying, the tag bleeps droidspeak and
+    // the panel stays the translation. Finer key so the glyphs turn over.
+    var isDroid = st.mode === "run" && st.label === "replying to you";
+    var key = st.mode+"|"+st.label+"|"+st.secs+(isDroid ? "|"+Math.floor(Date.now()/500) : "");
     if(key === lastTagKey) return;              // only touch the DOM on change
     lastTagKey = key;
     mainTag.dataset.off = "0";
@@ -1984,12 +2321,12 @@
     mainTag.innerHTML =
       '<span class="head"><span class="aser">R2</span>'+
       '<span class="aid">primary</span></span>'+
-      '<span class="what">'+(st.label||"—")+'</span>'+
+      '<span class="what">'+esc(isDroid ? droidSpeak() : (st.label||"—"))+'</span>'+
       (st.secs > 1 ? '<span class="secs">'+st.secs+'s</span>' : '');
   }
 
   var tmp=new THREE.Vector3(), tmpTagV=new THREE.Vector3();
-  function updateSpots(w,h){
+  function updateTags(w,h){
     // Callouts are HTML sitting on top of a 3D scene, so depth has to be
     // applied by hand: nearer ones stack above, and everything shrinks and
     // fades with distance. Without it two tags simply overlap and the far
@@ -2017,13 +2354,6 @@
     }
     tmpTagV.set(0, 5.2, 0); droid.localToWorld(tmpTagV);
     placeTag(mainTag, tmpTagV, mainTag.dataset.off === "1");
-    Object.keys(spotEls).forEach(function(k){
-      var s=spotEls[k];
-      tmp.copy(s.vec); droid.localToWorld(tmp); tmp.project(camera);
-      if(tmp.z>1){ s.holder.style.display="none"; return; }
-      s.holder.style.display="block";
-      s.holder.style.transform="translate("+((tmp.x*0.5+0.5)*w).toFixed(1)+"px,"+((-tmp.y*0.5+0.5)*h).toFixed(1)+"px)";
-    });
     Object.keys(AGENTS).forEach(function(id){
       var A=AGENTS[id];
       tmpTagV.set(0, 4.8, 0); A.wrap.localToWorld(tmpTagV);
@@ -2053,8 +2383,8 @@
              : ev.kind==="queue" ? ("queue "+(ev.op||"?"))
              : ev.kind==="system" && ev.ms ? ((ev.label||"turn")+" "+(ev.ms/1000).toFixed(1)+"s")
              : (ev.label||ev.kind);
-    row.innerHTML='<span class="ts">'+hhmm(ev.t)+'</span><span class="nm">'+name+'</span>'+
-                  (ev.agent?'<span class="sd">'+ev.agent+'</span>':(ev.sidechain?'<span class="sd">sub</span>':''));
+    row.innerHTML='<span class="ts">'+hhmm(ev.t)+'</span><span class="nm">'+esc(name)+'</span>'+
+                  (ev.agent?'<span class="sd">'+esc(ev.agent)+'</span>':(ev.sidechain?'<span class="sd">sub</span>':''));
     ticker.appendChild(row);
     while(ticker.children.length>9) ticker.removeChild(ticker.firstChild);
   }
@@ -2105,11 +2435,12 @@
       return true;
     }
     if(ev.kind === "file"){
+      if(!ev.path) return true;   // malformed: count nothing, break nothing
       if(workshop.userData.tiles){
         workshop.userData.tiles.touch(ev.path);
         live.files = workshop.userData.tiles.count();
       }
-      live.lastFile = ev.path.split("/").pop();
+      live.lastFile = String(ev.path).split("/").pop();
       return true;
     }
     if(ev.kind === "queue"){
@@ -2133,6 +2464,12 @@
   function handle(ev, silent){
     live.events++;
     live.lastAt = Date.now();
+    // wake-up snap: a live event after long silence startles it awake
+    if(sleepAmt > 0.5 && !silent){
+      sleepAmt = 0;
+      turnDome(MAIN, Math.PI*2);
+      SOUND.chirp(2, voiceRate(live.model));
+    }
     if(ev.model) live.model = ev.model;
     if(ev.tokens) live.tokens += ev.tokens;
     if(ev.cache) live.cache += ev.cache;
@@ -2148,7 +2485,10 @@
     /* Prose from the model with no subagent behind it is the session
        addressing YOU. It is the only event here aimed outward, so it gets
        the one outward gesture: a sonar ping off the droid. */
-    if(ev.kind === "text" && !ev.sidechain && !ev.agent && !silent) sonarReq = true;
+    if(ev.kind === "text" && !ev.sidechain && !ev.agent){
+      talkUntil = Date.now() + TALK_MS;   // holds through replay too: honest state
+      if(!silent) sonarReq = true;        // ...but rings only fire live, not on replay
+    }
 
     if(ev.agent && ev.kind==="tool" && ev.tool==="Task"){
       lastTask = { agent: ev.agent, at: Math.min(Date.now(), ev.t || Date.now()) };
@@ -2158,7 +2498,11 @@
       var A = ensureAgent(ev.agent, ev.model, ev.t);
       if(!A){ if(!silent) pushTick(ev, false); return; }
       A.lastAt = Math.min(Date.now(), ev.t || Date.now());
-      if(ev.atype) A.el.querySelector(".atype").textContent = ev.atype;
+      if(ev.model) A.model = ev.model;
+      if(ev.tokens) A.tokens += ev.tokens;
+      if(ev.kind === "tool"){ A.lastTool = ev.tool; A.tools++; }
+      else if(ev.kind === "result" && ev.error){ A.errors++; }
+      if(ev.atype){ A.atype = ev.atype; A.el.querySelector(".atype").textContent = ev.atype; }
       // the model is only known once a model-bearing event arrives
       if(ev.model){
         var want = seriesFor(ev.model);
@@ -2180,6 +2524,10 @@
       }
       if(ev.kind==="tool") pendStart(A.pend, ev);
       else if(ev.kind==="result") pendEnd(A.pend, ev);
+      if(!silent){
+        if(ev.kind === "tool" && SOUND.gate("tool", 260)) SOUND.tick();
+        else if(ev.kind === "result" && ev.error && SOUND.gate("buzz", 600)) SOUND.buzz();
+      }
       route(ev, A.mod, A.r2);
       bump(MOD,"vck",0.10);
     } else {
@@ -2193,6 +2541,15 @@
       }
       if(ev.kind==="tool") pendStart(mainPend, ev);
       else if(ev.kind==="result") pendEnd(mainPend, ev);
+      if(!silent){
+        if(ev.kind === "tool"){
+          if(ev.tool === "Task" || ev.tool === "Agent") SOUND.chirp(3, voiceRate(live.model));   // a droid is born
+          else if(SOUND.gate("tool", 260)) SOUND.tick();
+        }
+        else if(ev.kind === "user" && !ev.sidechain && SOUND.gate("user", 900)) SOUND.blip(false);
+        else if(ev.kind === "title" && SOUND.gate("title", 1500)) SOUND.blip(true);
+        else if(ev.kind === "result" && ev.error && SOUND.gate("buzz", 600)) SOUND.buzz();
+      }
       if(ev.kind==="result"){ if(ev.error) MAIN.bad = 1; else MAIN.good = 1; }
       var rid = route(ev, MOD, MAIN);
       if(!silent){
@@ -2276,6 +2633,10 @@
     live.cache=0; live.fresh=0; live.effort="—"; live.speed="—";
     live.perm="—"; live.files=0; live.lastFile="—"; live.queue=0;
     live.turns=0; live.turnMs=0; live.cost=null;
+    // animation state too: without this the droid keeps talking (or stays
+    // asleep, and fakes a wake-up) with the previous session's state
+    talkUntil=0; talkAmt=0; thinkAmt=0; sleepAmt=0; chargeUntil=0;
+    lastTagKey=""; lastMainStatus=null; roam.held=false;
     ticker.innerHTML="";
   }
 
@@ -2309,13 +2670,14 @@
       });
       renderReadout();
     });
-    es.addEventListener("ready", function(){ setLink("1","listening"); });
+    es.addEventListener("ready", function(){ setLink("1","listening"); SOUND.blip(true); });
     es.addEventListener("events", function(e){
       // queued, not fired: the loop paces them out
       QUEUE.push.apply(QUEUE, JSON.parse(e.data));
     });
     es.addEventListener("beat", function(){});
     es.onerror=function(){
+      SOUND.blip(false);
       setLink("err","reconnecting…");
       if(es){ es.close(); es=null; }
       retry=setTimeout(function(){ connect(path); }, 3000);
@@ -2350,20 +2712,21 @@
   btnPanel.addEventListener("click",function(){ showReadout(!readoutOpen); });
   showReadout(true);
 
-  function syncRoam(){ btnRoam.setAttribute("aria-pressed", roamOn?"true":"false"); }
+  function syncRoam(){ btnRoam.setAttribute("aria-pressed", roamOn?"true":"false"); savePrefs(); }
   btnRoam.addEventListener("click",function(){ roamOn=!roamOn; syncRoam(); });
 
   var shopOn = true;
   function syncShop(){
     btnShop.setAttribute("aria-pressed", shopOn?"true":"false");
     workshop.visible = shopOn;
+    savePrefs();
   }
   btnShop.addEventListener("click",function(){
     shopOn=!shopOn; syncShop();
     if(!shopOn){ closeStation(); hovered=null; hintEl.style.display="none"; }
   });
 
-  function syncSpin(){ btnSpin.setAttribute("aria-pressed", autoSpin?"true":"false"); }
+  function syncSpin(){ btnSpin.setAttribute("aria-pressed", autoSpin?"true":"false"); savePrefs(); }
   btnSpin.addEventListener("click",function(){ autoSpin=!autoSpin; syncSpin(); });
 
   var scanOn=!reduce;
@@ -2371,6 +2734,7 @@
     btnScan.setAttribute("aria-pressed",scanOn?"true":"false");
     uniforms.uScan.value=scanOn?1:0;
     scanRing.visible=scanOn;
+    savePrefs();
   }
   btnScan.addEventListener("click",function(){ scanOn=!scanOn; syncScan(); });
   btnReset.addEventListener("click",function(){
@@ -2386,6 +2750,151 @@
   document.addEventListener("keydown",function(e){
     if(e.key==="Escape" && scrim.dataset.open==="1") scrim.dataset.open="0";
   });
+  // view + drive keys. Skipped inside form controls so the session picker keeps working.
+  document.addEventListener("keydown",function(e){
+    var tag = e.target && e.target.tagName;
+    if(tag === "SELECT" || tag === "INPUT" || tag === "TEXTAREA") return;
+    keys[e.code] = true;
+    if(e.code === "Digit1") setView("orbit");
+    else if(e.code === "Digit2") setView("first");
+    else if(e.code === "Digit3") setView("third");
+    else if(e.code === "KeyV"){
+      setView(viewMode === "orbit" ? "first" : viewMode === "first" ? "third" : "orbit");
+    }
+    // R re-anchors the freefly camera onto the droid
+    else if(e.code === "KeyR" && viewMode === "orbit"){ flyRelease(); camGoal = null; }
+    if(e.code === "Space" || e.code.indexOf("Arrow") === 0) e.preventDefault();
+  });
+  document.addEventListener("keyup",function(e){ keys[e.code] = false; });
+
+  /* ===================================================================
+     11a. SOUND — procedural R2 bleeps + room tone
+     No samples: everything is synthesized with WebAudio, so the page stays
+     offline and ships no licensed audio. Off until toggled — browsers only
+     allow audio after a user gesture, and the toggle click is exactly that.
+     =================================================================== */
+  var SOUND = {
+    on:false, ctx:null, master:null, ambNodes:null, lastWarble:0, _g:{},
+    gate:function(key, ms){
+      var now = Date.now();
+      if(now - (this._g[key] || 0) < ms) return false;
+      this._g[key] = now;
+      return true;
+    },
+    // short tick for tool calls, pitch wandering so bursts don't drone
+    tick:function(){
+      var f = 1400 + Math.random()*1200;
+      this.tone(f, f*1.4, 0.05, "sine", 0.10, 0);
+    },
+    ensure:function(){
+      if(this.ctx) return true;
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if(!AC) return false;
+      this.ctx = new AC();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0.16;
+      this.master.connect(this.ctx.destination);
+      return true;
+    },
+    toggle:function(){
+      this.on = !this.on;
+      if(this.on && this.ensure()){
+        if(this.ctx.state === "suspended") this.ctx.resume();
+        this.ambient(true);
+        this.chirp(1);
+      } else {
+        this.on = false;
+        this.ambient(false);
+      }
+      return this.on;
+    },
+    tone:function(f0, f1, dur, type, vol, when){
+      if(!this.on || !this.ctx) return;
+      var t0 = this.ctx.currentTime + (when || 0);
+      var o = this.ctx.createOscillator(), g = this.ctx.createGain();
+      o.type = type || "triangle";
+      o.frequency.setValueAtTime(Math.max(30, f0), t0);
+      o.frequency.exponentialRampToValueAtTime(Math.max(30, f1), t0 + dur);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol || 0.5, t0 + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g); g.connect(this.master);
+      o.start(t0); o.stop(t0 + dur + 0.05);
+    },
+    // R2 voice: fast syllables wandering between ~700 and ~2600 Hz.
+    // rate bends the whole voice: R2 low, R4 plain, R5 sharp and out of tune.
+    chirp:function(n, rate){
+      if(!this.on) return;
+      rate = rate || 1;
+      var f = (900 + Math.random()*900)*rate, at = 0;
+      for(var i=0; i<(n||3); i++){
+        var f2 = (700 + Math.random()*1900)*rate;
+        if(rate > 1.2) f2 += Math.random()*160-80;   // cut-price unit, tuned never
+        var d = 0.06 + Math.random()*0.09;
+        this.tone(f, f2, d, "square", 0.16, at);
+        f = f2; at += d + 0.02 + Math.random()*0.05;
+      }
+    },
+    warble:function(rate){
+      rate = rate || 1;
+      this.tone((1200+Math.random()*400)*rate, (600+Math.random()*300)*rate, 0.11, "sawtooth", 0.10, 0);
+      this.tone((1800+Math.random()*600)*rate, 2400*rate, 0.07, "square", 0.08, 0.05);
+    },
+    buzz:function(){
+      this.tone(160, 90, 0.28, "sawtooth", 0.28, 0);
+      this.tone(113, 64, 0.28, "square", 0.18, 0.02);
+    },
+    blip:function(up){
+      if(up){ this.tone(660, 990, 0.09, "sine", 0.25, 0); }
+      else { this.tone(440, 220, 0.16, "sine", 0.22, 0); }
+    },
+    ambient:function(start){
+      if(!this.ctx) return;
+      if(!start){
+        if(this.ambNodes){
+          try{
+            this.ambNodes.stop.forEach(function(n){ try{ n.stop(); }catch(e){} });
+            this.ambNodes.g.disconnect();
+          }catch(e){}
+          this.ambNodes = null;
+        }
+        return;
+      }
+      if(this.ambNodes) return;
+      var ctx = this.ctx;
+      var g = ctx.createGain(); g.gain.value = 0.05; g.connect(this.master);
+      var o1 = ctx.createOscillator(); o1.type = "sine"; o1.frequency.value = 55;
+      var o2 = ctx.createOscillator(); o2.type = "sine"; o2.frequency.value = 82.5;
+      // air: looped noise through a lowpass, breathing slowly
+      var len = ctx.sampleRate * 2;
+      var buf = ctx.createBuffer(1, len, ctx.sampleRate);
+      var ch = buf.getChannelData(0);
+      for(var i=0;i<len;i++) ch[i] = Math.random()*2-1;
+      var src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+      var lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 320;
+      var lfo = ctx.createOscillator(); lfo.frequency.value = 0.07;
+      var lfoG = ctx.createGain(); lfoG.gain.value = 0.02;
+      lfo.connect(lfoG); lfoG.connect(g.gain);
+      o1.connect(g); o2.connect(g); src.connect(lp); lp.connect(g);
+      o1.start(); o2.start(); src.start(); lfo.start();
+      this.ambNodes = { g:g, stop:[o1, o2, src, lfo] };
+    }
+  };
+  // voice by series: R2 low, R4 plain, R5 sharp. Unknown model reads as R2.
+  function voiceRate(model){
+    var s = seriesFor(model || "");
+    return s === "r5" ? 1.35 : s === "r4" ? 1.0 : 0.8;
+  }
+  var btnView=document.getElementById("btn-view");
+  btnView.addEventListener("click",function(){
+    setView(viewMode === "orbit" ? "first" : viewMode === "first" ? "third" : "orbit");
+  });
+  var btnSound=document.getElementById("btn-sound");
+  btnSound.addEventListener("click",function(){
+    soundArmed = false;
+    btnSound.setAttribute("aria-pressed", SOUND.toggle() ? "true" : "false");
+    savePrefs();
+  });
 
   /* ===================================================================
      11b. PROJECTED PROPS
@@ -2396,6 +2905,10 @@
      =================================================================== */
   function propFor(tool){
     if(!tool) return null;
+    // No fixture for this one on purpose: asking is not bench work, and
+    // STATIONS has no "ask" entry, so the droid stays where it is and holds
+    // the question up instead of driving off to a workshop station.
+    if(ASK_TOOLS.test(tool)) return "ask";
     if(/^(Read|NotebookRead)$/.test(tool)) return "read";
     if(/^(Write|Edit|MultiEdit|NotebookEdit)$/.test(tool)) return "write";
     if(/^(Grep|Glob|LS|TodoRead|TodoWrite)$/.test(tool)) return "index";
@@ -2426,7 +2939,37 @@
     }
     function add(geo, m){ var o=new THREE.LineSegments(geo,m); g.add(o); return o; }
 
-    if(kind === "read" || kind === "write"){
+    if(kind === "ask"){
+      // The Leia panel: a question bar over a short list of choices. No text
+      // — the transcript's wording never leaves the disk — so it reads as
+      // "a question with N options", and the sweep says it is waiting on you.
+      add(rectGeo(1.9, 1.5), M(0.55));
+      var qy = 0.46;
+      add(segGeo(-0.72, qy, 0.72, qy), M(0.75, 0xbff4ff));      // the question
+      add(segGeo(-0.72, qy-0.14, 0.34, qy-0.14), M(0.45));      // second line
+      extra.opts = [];
+      for(var oi=0; oi<3; oi++){
+        var oy = 0.06 - oi*0.26;
+        add(segGeo(-0.76, oy, -0.66, oy), M(0.55));             // the marker
+        extra.opts.push(add(segGeo(-0.56, oy, -0.56 + (0.5 + (oi%3)*0.26), oy), M(0.42)));
+      }
+      extra.caret = add(rectGeo(0.07, 0.07), M(0.9, 0xbff4ff));
+      // interlace: faint lines sweeping the plate, the giveaway of a beam
+      extra.scans = [];
+      for(var si=0; si<3; si++){
+        extra.scans.push(add(segGeo(-0.95, 0, 0.95, 0), M(0.16, 0xbff4ff)));
+      }
+      // corner ticks: the plate looks framed rather than floating loose
+      [[-0.95,0.75,1],[0.95,0.75,-1],[-0.95,-0.75,1],[0.95,-0.75,-1]].forEach(function(c){
+        add(segGeo(c[0], c[1], c[0]+c[2]*0.22, c[1]), M(0.6));
+      });
+      // the beam itself: four rays converging below the plate, where the
+      // projector sits. Without these it is a floating sign, not a projection.
+      extra.beam = [];
+      [[-0.95,-0.75],[-0.32,-0.75],[0.32,-0.75],[0.95,-0.75]].forEach(function(p){
+        extra.beam.push(add(segGeo(p[0], p[1], 0, -2.15), M(0.14, 0xbff4ff)));
+      });
+    } else if(kind === "read" || kind === "write"){
       // a document page, read by a travelling scan bar or written line by line
       add(rectGeo(1.5, 1.95), M(0.55));
       add(segGeo(-0.75, 0.72, 0.75, 0.72), M(0.30));       // header rule
@@ -2534,6 +3077,43 @@
             rows[z2].material.opacity = rows[z2].material.userData.base * this.level *
               (z2===cellI ? 2.4 : (hit ? 1.5 : 1));
           }
+        } else if(kind === "ask"){
+          // Unstable projection: two sine waves of different periods beat
+          // against each other so the flicker never falls into an obvious
+          // loop, plus rare hard dropouts — a beam struggling to hold.
+          // steady for reduced-motion: flicker is exactly what that setting
+          // asks us not to do, and the panel reads fine without it
+          var beat = 0.82 + 0.13*Math.sin(tt*5.3) + 0.07*Math.sin(tt*11.7);
+          var drop = (Math.sin(tt*23.0) > 0.93) ? 0.45 : 1;   // brief cut-out
+          var flick = reduce ? 1 : beat * drop;
+          for(var fm=0; fm<mats.length; fm++){
+            mats[fm].opacity = mats[fm].userData.base * this.level * flick;
+          }
+          // interlace lines crawl up the plate at staggered offsets
+          for(var sc=0; sc<X.scans.length; sc++){
+            var sp = reduce ? (sc+0.5)/X.scans.length     // parked, not crawling
+                            : ((tt*0.32 + sc/X.scans.length) % 1);
+            X.scans[sc].position.y = -0.75 + sp*1.5;
+            X.scans[sc].material.opacity =
+              X.scans[sc].material.userData.base * this.level * flick *
+              (0.35 + 0.65*Math.sin(sp*Math.PI));          // fade at the edges
+          }
+          // the beam flickers harder than the plate: it is the unstable part
+          for(var bm=0; bm<X.beam.length; bm++){
+            X.beam[bm].material.opacity = X.beam[bm].material.userData.base *
+              this.level * flick * (0.5 + 0.5*Math.sin(tt*7 + bm*1.3));
+          }
+          // caret walks the options and the one under it brightens: a cursor
+          // waiting on a hand, not a progress bar
+          var pick = Math.floor(tt*0.8) % X.opts.length;
+          var oyy = 0.06 - pick*0.26;
+          X.caret.position.set(-0.66, oyy, 0);
+          X.caret.material.opacity = X.caret.material.userData.base * this.level *
+            flick * (0.45 + 0.55*Math.abs(Math.sin(tt*3)));
+          for(var ok=0; ok<X.opts.length; ok++){
+            X.opts[ok].material.opacity = X.opts[ok].material.userData.base *
+              this.level * flick * (ok === pick ? 2.2 : 1);
+          }
         } else {
           X.globe.rotation.y += dt*0.6;
           X.ring.rotation.y  -= dt*0.9;
@@ -2579,8 +3159,16 @@
       P.group.visible = true;
       P.setLevel(P.level);
       P.update(dt, tt, flight ? (Date.now()-flight.at)/1000 : 0);
-      if(mount){
+      var isAskProp = (keys[i] === "ask");
+      if(mount && !isAskProp){
         P.group.position.copy(mount);                    // mounted on a fixture
+      } else if(isAskProp){
+        // a question is held up in front, not filed away to one side, and it
+        // rides higher so it clears the dome and reads as addressed to you
+        propAnchor.copy(anchor)
+          .addScaledVector(propRight, 0.35*scale)
+          .setY(anchor.y + 4.15*scale);
+        P.group.position.copy(propAnchor);
       } else {
         propAnchor.copy(anchor)
           .addScaledVector(propRight, 2.45*scale)
@@ -2588,7 +3176,14 @@
         P.group.position.copy(propAnchor);
       }
       P.group.lookAt(camera.position);
-      P.group.scale.setScalar(scale * (0.35 + 0.65*easeOutBack(Math.min(1,P.level))));
+      var grow = isAskProp ? 1.75 : 1;                   // questions get room
+      P.group.scale.setScalar(scale * grow * (0.35 + 0.65*easeOutBack(Math.min(1,P.level))));
+      if(isAskProp && !reduce){
+        // projector wobble: the whole plate drifts and breathes a little, so
+        // it reads as a beam from the droid rather than a decal on the screen
+        P.group.position.y += Math.sin(tt*2.3)*0.055*scale;
+        P.group.rotation.z += Math.sin(tt*1.7)*0.012;
+      }
     }
   }
 
@@ -2605,7 +3200,43 @@
   var size=resize();
   window.addEventListener("resize",function(){ size=resize(); });
 
+  /* Toggle preferences persist in localStorage (per origin, so per port).
+     Sound restores armed, not playing: the button shows pressed and the
+     first click anywhere starts the context, because browsers need the
+     gesture. Reduced motion always wins over a saved Scan=true. */
+  var PREFS_KEY = "r2holo.prefs.v1", prefPanel = true, soundArmed = false;
+  function savePrefs(){
+    if(typeof PREFS_KEY === "undefined") return;   // syncs also run before this block is evaluated
+    try{
+      localStorage.setItem(PREFS_KEY, JSON.stringify({
+        panel:readoutOpen, shop:shopOn, roam:roamOn, spin:autoSpin,
+        scan:scanOn, sound:(SOUND.on || soundArmed)
+      }));
+    }catch(e){}
+  }
+  function armSound(){
+    soundArmed = true;
+    btnSound.setAttribute("aria-pressed", "true");
+    document.addEventListener("pointerdown", function kick(){
+      document.removeEventListener("pointerdown", kick);
+      if(soundArmed){ soundArmed = false; btnSound.click(); }
+    });
+  }
+  function loadPrefs(){
+    var p = null;
+    try{ p = JSON.parse(localStorage.getItem(PREFS_KEY) || "null"); }catch(e){}
+    if(!p || typeof p !== "object") return;
+    if(typeof p.shop === "boolean") shopOn = p.shop;
+    if(typeof p.roam === "boolean") roamOn = p.roam;
+    if(typeof p.spin === "boolean") autoSpin = p.spin;
+    if(typeof p.scan === "boolean" && !reduce) scanOn = p.scan;
+    if(typeof p.panel === "boolean") prefPanel = p.panel;
+    if(p.sound) armSound();
+  }
+
+  loadPrefs();
   applyCamera(); select(SYSTEMS[0].id); syncRoam(); syncShop(); syncSpin(); syncScan();
+  showReadout(prefPanel);
   markShared();
 
   var clock=new THREE.Clock();
@@ -2651,7 +3282,25 @@
     var sinceLast = nowMs - (live.lastAt || 0);
     var waiting = !inflight && live.lastAt && sinceLast < WAIT_WINDOW;
     if(waiting) MOD.int.p = Math.max(MOD.int.p, 0.20);
-    var idle = !inflight && !waiting;
+    // talking beats waiting: prose landing means the model is answering, not thinking
+    var talking = !inflight && !(nowMs < chargeUntil) && nowMs < talkUntil;
+    talkAmt = damp(talkAmt, talking ? 1 : 0, 5, dt);
+    // thinking = the model is working but no call is open (the gap between a
+    // result landing and the next move) — or the only open call is a Task
+    // handed to a subagent, during which the parent would otherwise sit
+    // frozen on RUNNING for minutes. Drives the LED chase, not the lamps:
+    // amber stays the settled "waiting on the model" level underneath.
+    var delegated = !!(inflight && /^(Task|Agent)$/.test(inflight.tool || ""));
+    var thinking = (waiting || delegated) && !talking && !(nowMs < chargeUntil);
+    thinkAmt = damp(thinkAmt, thinking ? 1 : 0, 5, dt);
+    // long sleep after minutes of nothing: a slow fall, not a switch
+    var sleeping = !!(live.lastAt && nowMs - live.lastAt > SLEEP_AFTER);
+    sleepAmt = damp(sleepAmt, sleeping ? 1 : 0, 1.5, dt);
+    if(sleepAmt > 0.7 && SOUND.gate("sleep", 25000)) SOUND.chirp(1, voiceRate(live.model));
+    if(talkAmt > 0.5 && nowMs - SOUND.lastWarble > 1100){
+      SOUND.lastWarble = nowMs; SOUND.warble(voiceRate(live.model));
+    }
+    var idle = !inflight && !waiting && !talking;
 
     /* If the bay is up and the tool has a station, that fixture is where the
        work happens: the droid drives there and the prop mounts on it. */
@@ -2674,6 +3323,8 @@
           secs:Math.round((chargeUntil-nowMs)/1000), mode:"charge" }
       : inflight
       ? { head:"RUNNING", label:inflight.tool, secs:Math.round((nowMs-inflight.at)/1000), mode:"run" }
+      : talking
+      ? { head:"TALKING", label:"replying to you", secs:Math.round((talkUntil-nowMs)/1000), mode:"run" }
       : waiting
       ? { head:"WAITING ON MODEL", label:live.lastTool, secs:Math.round(sinceLast/1000), mode:"wait" }
       : { head:"IDLE", label:live.lastTool, secs:0, mode:"idle" };
@@ -2682,14 +3333,40 @@
     updateProps(mainProps, inflight, dt, t, propAnchor, 1,
                 station ? station.mount : null);
 
-    var ex = animateDroid(MAIN, MOD, t, dt, idle);
+    var ex = animateDroid(MAIN, MOD, t, dt, idle, talkAmt, thinkAmt);
+    // asleep: head droops, lights dim to a quarter, but never fully out
+    if(sleepAmt > 0.01){
+      MAIN.dome.rotation.x += sleepAmt * 0.3;
+      var dim = 1 - sleepAmt*0.75;
+      MAIN.eyeMat.opacity *= dim;
+      ["idle","wait","ask","err"].forEach(function(kk){
+        MAIN.lamps[kk].opacity *= dim;
+        MAIN.lamps[kk].userData.halo.opacity *= dim;
+      });
+      for(var li2=0; li2<MAIN.logic.length; li2++){
+        MAIN.logic[li2].opacity *= dim;
+        MAIN.logic[li2].userData.halo.opacity *= dim;
+      }
+    }
 
     /* --- patrol: pick a spot, roll to it, park in the middle when idle --- */
-    if(station){
+    // A real question (not just a finished turn) pins it in place: it is
+    // waiting on you, and wandering off mid-question reads as indifference.
+    // Only this droid stops — the rest of the bay carries on working.
+    var askPin = isAsk(mainPend);
+    if(askPin){
+      if(!roam.held){ roam.held = true; roam.hold.set(roam.pos.x, 0, roam.pos.z); }
+      roam.target.copy(roam.hold);
+    } else if(station){
       roam.target.copy(station.stand);
       roam.next = 2.5;                       // resume wandering once it ends
     } else if(charging){
       roam.target.set(0, 0, 13.2);           // dock even with the bay hidden
+    } else if(sleepAmt > 0.5){
+      // asleep: stay where it dropped. Latch the spot once — copying the
+      // live pos every frame lets the damp drift it across the floor.
+      if(!roam.held){ roam.held = true; roam.hold.set(roam.pos.x, 0, roam.pos.z); }
+      roam.target.copy(roam.hold);
     } else if(roamOn && !idle){
       roam.next -= dt;
       if(roam.next <= 0){
@@ -2698,8 +3375,23 @@
         roam.next = 6 + Math.random()*9;
       }
     } else {
-      roam.target.set(0, 0, 3.4);   // parks beside the column, not inside it
+      // done working: hold the last spot instead of trekking back to the
+      // middle — where it stopped is where the last job was. A slow sway
+      // keeps it from reading as frozen.
+      if(!roam.held){
+        roam.held = true;
+        roam.hold.set(roam.pos.x, 0, roam.pos.z);
+      }
+      var swayA = reduce ? 0 : 0.2;
+      roam.target.set(
+        roam.hold.x + Math.sin(t*0.5)*swayA,
+        0,
+        roam.hold.z + Math.cos(t*0.37)*swayA
+      );
     }
+    // askPin excluded: it owns roam.held while the question is open, and the
+    // tool in flight would otherwise clear the latch on every frame
+    if(!askPin && (station || charging || (roamOn && !idle))) roam.held = false;
 
     // light the station he is working at, dim the rest
     if(workshop.userData.stations){
@@ -2708,7 +3400,11 @@
         var St = SS[k];
         if(!St || seen[St.kind]) return;
         seen[St.kind] = 1;
-        St.lit = damp(St.lit, (station === St) ? 1 : 0, 5, dt);
+        // lit for whoever is working there: the primary, or a subagent that
+        // booked it. The claim map is last frame's — a frame behind is
+        // invisible, and it keeps the bench from going dark under a subagent.
+        var inUse = (station === St) || (prevClaimed[St.kind] !== undefined);
+        St.lit = damp(St.lit, inUse ? 1 : 0, 5, dt);
         St.mat.opacity = St.lit * (0.28 + 0.22*(0.5+0.5*Math.sin(t*2.4)));
         St.ring.visible = St.lit > 0.02;
       });
@@ -2734,19 +3430,76 @@
     );
     droid.rotation.y = roam.heading;
     droid.rotation.z = roam.bank;
+    if(askPin && !reduce){
+      // turn to face whoever is being asked, and hold the dome square on
+      var toCam = Math.atan2(camera.position.x - roam.pos.x,
+                             camera.position.z - roam.pos.z);
+      // same wrap as the patrol turn above: take the short way round, never
+      // the long spin through ±π
+      var aturn = ((toCam - roam.heading + Math.PI*3) % (Math.PI*2)) - Math.PI;
+      roam.heading += aturn * (1 - Math.exp(-3*dt));
+      droid.rotation.y = roam.heading;
+      MAIN.domeTarget = damp(MAIN.domeTarget, 0, 3, dt);
+    }
     if(charging){                     // docked: faces the arch, sits low
       MAIN.squash.scale.y = damp(MAIN.squash.scale.y, 0.94, 4, dt);
       MAIN.domeTarget = damp(MAIN.domeTarget, 0, 3, dt);
     }
 
+    // --- 1st person: set camera BEFORE stepMe so the forward vector is fresh ---
+    if(viewMode === "first"){
+      camera.position.set(me.pos.x, me.pos.y + 2.8, me.pos.z);
+      var cp = Math.cos(fpPitch);
+      camera.lookAt(
+        camera.position.x + Math.sin(fpYaw)*cp,
+        camera.position.y + Math.sin(fpPitch),
+        camera.position.z + Math.cos(fpYaw)*cp);
+      camera.updateMatrixWorld();
+    }
+
     // keep him loosely framed instead of letting him wander out of shot
-    cam.target.x = damp(cam.target.x, roam.pos.x*0.55, 1.6, dt);
-    cam.target.z = damp(cam.target.z, roam.pos.z*0.55, 1.6, dt);
-    applyCamera();
+    if(viewMode === "third" || viewMode === "first") stepMe(dt, t);
+    if(viewMode === "third"){
+      // auto-position camera behind the ball: use damp() for the absolute
+      // angle so it settles without oscillating
+      var msp = Math.sqrt(me.vel.x*me.vel.x + me.vel.z*me.vel.z);
+      if(!drag){
+        var behindAngle = msp > 0.15
+          ? Math.atan2(-me.vel.x, -me.vel.z)        // behind the velocity
+          : -meGroup.rotation.y;                      // behind the ball's facing
+        cam.theta = damp(cam.theta, behindAngle, 3, dt);
+      }
+      cam.target.x = damp(cam.target.x, me.pos.x, 4, dt);
+      cam.target.y = damp(cam.target.y, me.pos.y+1.2, 4, dt);
+      cam.target.z = damp(cam.target.z, me.pos.z, 4, dt);
+    } else if(viewMode === "orbit"){
+      stepFly(dt);
+      if(!flyOn){          // hands off the keys: drift back to framing the droid
+        cam.target.x = damp(cam.target.x, roam.pos.x*0.55, 1.6, dt);
+        cam.target.y = damp(cam.target.y, 3.4, 1.6, dt);
+        cam.target.z = damp(cam.target.z, roam.pos.z*0.55, 1.6, dt);
+      }
+    } else {
+      cam.target.x = damp(cam.target.x, roam.pos.x*0.55, 1.6, dt);
+      cam.target.y = damp(cam.target.y, 3.4, 1.6, dt);
+      cam.target.z = damp(cam.target.z, roam.pos.z*0.55, 1.6, dt);
+    }
+    if(camGoal && performance.now() > camGoal.until) camGoal = null;
+    if(camGoal && flyOn) flyRelease();   // right-click focus wins over freefly
+    if(camGoal && viewMode !== "third"){
+      cam.target.x = damp(cam.target.x, camGoal.x, 1.6, dt);
+      cam.target.z = damp(cam.target.z, camGoal.z, 1.6, dt);
+      cam.radius = damp(cam.radius, camGoal.r, 1.6, dt);
+    }
+    if(viewMode !== "first") applyCamera();
 
     alarmEl.style.opacity = (ex*0.45).toFixed(3);
 
     /* --- subagent droids --- */
+    // One droid per fixture. The primary books first (it was here already),
+    // then subagents in id order; whoever misses out works from its own slot.
+    var claimed = {};
+    if(station) claimed[station.kind] = "main";
     var ids = Object.keys(AGENTS);
     var newest = null, newestT = 0;
     for(var ai=0; ai<ids.length; ai++){
@@ -2764,13 +3517,14 @@
       var aSecs = aFlight ? Math.round((nowMs - aFlight.at)/1000)
                           : Math.round(aSince/1000);
       var aKey = aMode + "|" + (aFlight ? aFlight.tool : "") + "|" + aSecs;
+      A.mode = aMode; A.secs = aSecs;
       if(aKey !== A.tagKey){
         A.tagKey = aKey;
         A.el.dataset.mode = aMode;
         if(aFlight) A.el.querySelector(".what").textContent = aFlight.tool;
         A.el.querySelector(".secs").textContent = aSecs > 1 ? aSecs + "s" : "";
       }
-      animateDroid(A.r2, A.mod, t, dt, aIdle);
+      animateDroid(A.r2, A.mod, t, dt, aIdle, 0, aWait ? 1 : 0);
       A.r2.group.position.set(A.r2.shake.x, 0, A.r2.shake.z);
 
       /* They patrol their own patch too, otherwise they read as frozen next
@@ -2778,7 +3532,25 @@
       var PA = A.parent && AGENTS[A.parent];
       var bx = PA ? PA.wrap.position.x + A.anchor.x : A.anchor.x;
       var bz = PA ? PA.wrap.position.z + A.anchor.z : A.anchor.z;
-      if(!aIdle && !reduce){
+
+      /* Working at a fixture? Go stand at it, like the primary does — but
+         only if nobody booked it this frame, otherwise queue at home. */
+      var aStKind = aFlight ? propFor(aFlight.tool) : null;
+      var aSt = (shopOn && aStKind && workshop.userData.stations)
+                  ? workshop.userData.stations[aStKind] : null;
+      if(aSt && canClaim(claimed[aSt.kind], prevClaimed[aSt.kind], ids[ai])){
+        claimed[aSt.kind] = ids[ai];
+        // offset off the bench so it parks beside the primary's spot, not in it
+        var aoff = (A.slot % 2) ? 1.1 : -1.1;
+        bx = aSt.stand.x + aoff;
+        bz = aSt.stand.z + 0.9;
+        A.atStation = true;
+      } else {
+        A.atStation = false;
+      }
+      // aAsk pins it too: only the droid with the question stops, the rest
+      // of the bay keeps working around it
+      if(!aIdle && !reduce && !A.atStation && !aAsk){
         A.rnext -= dt;
         if(A.rnext <= 0){
           A.woff.set((Math.random()-0.5)*1.9, 0, (Math.random()-0.5)*1.9);
@@ -2793,7 +3565,10 @@
       var avx=(A.wrap.position.x-apx)/Math.max(dt,1e-4);
       var avz=(A.wrap.position.z-apz)/Math.max(dt,1e-4);
       var wantY;
-      if(Math.sqrt(avx*avx+avz*avz) > 0.05){
+      if(aAsk){                                  // asking: face whoever must answer
+        wantY = Math.atan2(camera.position.x - A.wrap.position.x,
+                           camera.position.z - A.wrap.position.z);
+      } else if(Math.sqrt(avx*avx+avz*avz) > 0.05){
         wantY = Math.atan2(avx, avz);            // look where you are going
       } else {                                   // otherwise face who sent you
         var fx = PA ? PA.wrap.position.x : droid.position.x;
@@ -2847,6 +3622,7 @@
       if(A.lastAt > newestT){ newestT = A.lastAt; newest = A; }
       if(A.dying && A.wrap.scale.x < 0.02) killAgent(ids[ai]);
     }
+    prevClaimed = claimed;   // next frame's bench lights read this
 
     /* --- the VicksVisc beam aims at whichever droid worked last --- */
     if(MAIN.beam){
@@ -2878,10 +3654,45 @@
       CR.mat.opacity = 0.55 * Math.sin(f*Math.PI);
     }
 
-    /* --- sonar: the session said something to you --------------------- */
+    /* --- footprints: heat where the primary walked ---------------------- */
+    if(!reduce && roam.speed > 0.6){
+      trailAcc += dt;
+      if(trailAcc > 0.8){
+        trailAcc = 0;
+        // a free slot, else the faintest one — recycling the oldest print
+        // avoids cutting a fresh one short and popping visibly
+        var tslot = TRAIL[0];
+        for(var fi=0; fi<TRAIL.length; fi++){
+          if(TRAIL[fi].life <= 0){ tslot = TRAIL[fi]; break; }
+          if(TRAIL[fi].life < tslot.life) tslot = TRAIL[fi];
+        }
+        tslot.life = TRAIL_LIFE;
+        tslot.obj.position.set(droid.position.x, 0.03, droid.position.z);
+        tslot.obj.scale.setScalar(1.1);
+      }
+    } else {
+      trailAcc = 0;
+    }
+    for(var fj=0; fj<TRAIL.length; fj++){
+      var FT = TRAIL[fj];
+      if(FT.life <= 0){ FT.obj.visible = false; continue; }
+      FT.life -= dt;
+      FT.obj.visible = true;
+      FT.mat.opacity = Math.max(0, 0.10 * (FT.life / TRAIL_LIFE));
+    }
+
+    /* --- sonar: the session said something to you ---------------------
+       The rings leave from the antenna tips, not the floor: this is a
+       broadcast outward, and the head snap below turns the dome to face
+       you first so the ping reads as aimed, not ambient. */
     if(sonarReq){
       sonarReq = false;
-      sonarT0 = t; sonarX = droid.position.x; sonarZ = droid.position.z;
+      // voice of the session model, bent by camera distance: far reads lower
+      var dop = clamp(1.3 - camera.position.distanceTo(droid.position)*0.02, 0.7, 1.2);
+      SOUND.chirp(2, voiceRate(live.model)*dop);
+      sonarT0 = t;
+      MAIN.antennas.getWorldPosition(tmp);
+      sonarX = tmp.x; sonarY = tmp.y; sonarZ = tmp.z;
       turnDome(MAIN, -MAIN.domeTarget);        // it turns to face you as well
     }
     for(var si=0; si<SONAR.length; si++){
@@ -2890,7 +3701,7 @@
       if(sp <= 0 || sp >= 1){ S.obj.visible = false; continue; }
       S.obj.visible = true;
       var se = 1 - Math.pow(1-sp, 2.4);         // fast out, long tail
-      S.obj.position.set(sonarX, 0.06 + se*0.5, sonarZ);
+      S.obj.position.set(sonarX, sonarY + se*2.2, sonarZ);
       S.obj.scale.setScalar(0.7 + se*13.5);
       S.mat.opacity = 0.62 * Math.pow(1-sp, 1.6);
     }
@@ -2954,7 +3765,7 @@
     }
     gridGroup.rotation.y = t*0.018;
 
-    updateSpots(size[0],size[1]);
+    updateTags(size[0],size[1]);
     renderer.render(scene,camera);
   }
   frame();

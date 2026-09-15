@@ -6,18 +6,19 @@
  */
 import { stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { PORT, PUBLIC, ROOT, SESSION_LIMIT_DEFAULT, SESSION_LIMIT_MAX } from "./config.ts";
-import { listSessions } from "./sessions.ts";
+import { HOST, PORT, PUBLIC, ROOT } from "./config.ts";
+import { clampLimit, listSessions } from "./sessions.ts";
 import { insideRoot, streamSession } from "./stream.ts";
 
 Bun.serve({
   port: PORT,
+  hostname: HOST,
   idleTimeout: 255,
   async fetch(req) {
     const url = new URL(req.url);
 
     if (url.pathname === "/api/sessions") {
-      const limit = Math.min(Number(url.searchParams.get("limit") ?? SESSION_LIMIT_DEFAULT), SESSION_LIMIT_MAX);
+      const limit = clampLimit(url.searchParams.get("limit") ?? undefined);
       return Response.json(await listSessions(limit));
     }
 
@@ -51,4 +52,9 @@ Bun.serve({
 
 console.log(`\n  R2 Holotable`);
 console.log(`  sessions from  ${ROOT}`);
-console.log(`  listening on   http://localhost:${PORT}\n`);
+console.log(`  listening on   http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
+if (HOST !== "127.0.0.1" && HOST !== "localhost") {
+  console.log(`  ⚠ reachable from the network on ${HOST} — anyone who can`);
+  console.log(`    reach this port can read your transcripts.`);
+}
+console.log("");

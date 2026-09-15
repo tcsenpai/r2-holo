@@ -8,9 +8,18 @@ import { join } from "node:path";
 import {
   ROOT,
   SESSION_MIN_BYTES,
+  SESSION_LIMIT_DEFAULT,
+  SESSION_LIMIT_MAX,
   DESCRIBE_HEAD_BYTES,
   DESCRIBE_TAIL_BYTES,
 } from "./config.ts";
+
+/** Garbage in (?limit=abc) falls back to the default instead of NaN. */
+export function clampLimit(raw: unknown): number {
+  const n = typeof raw === "string" || typeof raw === "number" ? Number(raw) : NaN;
+  if (!Number.isFinite(n)) return SESSION_LIMIT_DEFAULT;
+  return Math.max(1, Math.min(Math.floor(n), SESSION_LIMIT_MAX));
+}
 import { readSlice, readTail } from "./fsutil.ts";
 import { listSubFiles, subDirOf } from "./subagents.ts";
 import type { SessionInfo } from "./types.ts";

@@ -2,3 +2,16 @@ node_modules/
 bun.lockb
 *.log
 .DS_Store
+
+# Local agent/tooling state — regenerable, machine-specific, never published.
+graft/
+.bank
+.ignore
+.mimocode/
+.herdr_sessions/
+codedb.snapshot
+repo-map.json
+
+# Working notes passed between sessions, not documentation.
+HANDOFF.md
+PLAN.md
