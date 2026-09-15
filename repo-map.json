@@ -1,0 +1,171 @@
+{
+  "repo": "r2-holo",
+  "title": "R2 Holotable",
+  "oneliner": "Un R2-D2 olografico che reagisce live a quello che fa una sessione Claude Code, leggendo il transcript .jsonl da disco e proiettando solo la forma degli eventi via SSE.",
+  "runtime": {
+    "server": "Bun (Bun.serve, import.meta.dir, Bun.file)",
+    "lang_server": "TypeScript (server.ts, nessun package.json, zero dipendenze npm)",
+    "frontend": "Vanilla JS IIFE in public/holotable.js + Three.js r128 vendored (public/three.min.js, ~589KB)",
+    "fonts": "Google Fonts opzionale (Chakra Petch, IBM Plex Mono/Sans) con fallback di sistema",
+    "run": ["bun run server.ts", "PORT=8080 bun run server.ts"],
+    "url": "http://localhost:4242"
+  },
+  "stats": {
+    "files_total": 5,
+    "loc": {
+      "server.ts": 599,
+      "public/holotable.js": 2961,
+      "public/index.html": 386,
+      "public/three.min.js": 6,
+      "README.md": 127
+    },
+    "bytes_frontend_js": "~122KB",
+    "note_three_min_js": "file vendored, 6 righe, non mappato nel dettaglio"
+  },
+  "files": {
+    "server.ts": "Indice sessioni + normalizzazione eventi + SSE (tutto il backend in un file)",
+    "public/index.html": "Layout, palette CSS (~274 righe di <style>), DOM (stage, rail, readout, ticker, console, modal info), bootstrap <script> three.min.js + holotable.js",
+    "public/holotable.js": "Modello procedurale Three.js + rig + reazioni agli eventi + fleet subagenti + workshop/stanze + UI (tutto il frontend in un IIFE da ~2960 righe)",
+    "public/three.min.js": "Three.js r128 servito in locale, page offline-capable",
+    "README.md": "Contratto del formato transcript, mapping moduli, fleet, colour channels, note sui footgun Three.js"
+  },
+  "backend": {
+    "file": "server.ts",
+    "sections": [
+      {
+        "name": "sliced-reads",
+        "lines": "35-63",
+        "symbols": ["readSlice(path,start,length)", "readTail(path,bytes)"],
+        "does": "Letture a slice/coda senza caricare transcript multi-MB in memoria"
+      },
+      {
+        "name": "session-index",
+        "lines": "69-173",
+        "symbols": ["SessionInfo", "describe(path)", "effectiveMtime()", "listSessions(limit=40)"],
+        "does": "Scansiona ~/.claude/projects, scarta file <1KB, ordina per mtime effettivo (parent + subagents), arricchisce con cwd/branch/title da head/tail"
+      },
+      {
+        "name": "event-normalisation",
+        "lines": "182-325",
+        "symbols": ["Ev", "CostDigest", "shortPath()", "normalize(line,agent?)"],
+        "does": "Ogni riga .jsonl -> 0..N eventi minimi {t,kind,tool,error,sidechain,agent,atype,model,tokens,cache,fresh,...}. Kind: tool|result|text|user|system|mode|title|cost|file|queue. Mai contenuto della sessione"
+      },
+      {
+        "name": "prelude-scan",
+        "lines": "341-382",
+        "symbols": ["prelude(path)", "PRELUDE_FILES=24", "PRELUDE_MAX=512MB"],
+        "does": "Sweep una tantum a connect con solo substring-match cost-state/file-history-delta (niente JSON.parse), ripristina ledger + bench tiles fuori dalla finestra di 512KB"
+      },
+      {
+        "name": "subagents",
+        "lines": "388-402",
+        "symbols": ["subDirOf()", "agentIdOf()", "listSubFiles()"],
+        "does": "Convenzione <session-id>/subagents/agent-<id>.jsonl, id corto = 6 char"
+      },
+      {
+        "name": "sse-stream",
+        "lines": "408-559",
+        "symbols": ["insideRoot()", "streamSession(parentPath)", "BACKLOG_AGENTS=4", "RECENT_MS=15min"],
+        "does": "backlog parent 512KB + replay 192KB solo per i 4 subagent freschi (<15min), poi live tail con fs.watch + poll 1.2s + rescan subagents ogni ~5s + heartbeat 15s. Eventi: backlog, ready, events, beat, error"
+      },
+      {
+        "name": "http",
+        "lines": "565-599",
+        "symbols": ["GET /api/sessions", "GET /api/stream?path=", "static PUBLIC/"],
+        "does": "Loopback-only, read-only. /api/stream 403 se fuori ROOT, 404 se file assente. Statici via Bun.file"
+      }
+    ],
+    "constants_tuning": {
+      "BACKLOG_AGENTS": 4,
+      "RECENT_MS": "15*60*1000",
+      "backlog_parent": "512KB",
+      "backlog_agent": "192KB",
+      "backlog_cap": "220 eventi",
+      "poll": "1200ms",
+      "rescan": "ogni 4 tick (~5s)",
+      "heartbeat": "15s",
+      "PRELUDE_FILES": 24
+    }
+  },
+  "frontend": {
+    "file": "public/holotable.js",
+    "pattern": "singolo IIFE 'use strict', ~50+ funzioni in closure condivisa, stato globale mutabile",
+    "sections": [
+      {
+        "name": "data-subsystems",
+        "lines": "~20-140",
+        "symbols": ["SYSTEMS[8]", "MODKEYS", "newMod()", "MOD", "live"],
+        "does": "Tabella SNS/SCP/MAN/TRX/VCK/EXT/INT/LOC con anchor 3D, note, specs, mapping tool->modulo"
+      },
+      {
+        "name": "event-routing",
+        "lines": "~154-270",
+        "symbols": ["cacheRatio()", "pendStart/pendEnd()", "applyPending()", "moduleFor(tool)", "seriesFor(model)", "route(ev)", "sessionSignal(ev)", "handle(ev)"],
+        "does": "tool->modulo (Read/Grep/Glob/LS->sns, Bash*->scp, Write/Edit*->man, Web*/mcp__*->trx, Task->vck, is_error->ext, prose->int, user->loc). model->serie (opus->R2, sonnet->R4, haiku->R5)"
+      },
+      {
+        "name": "three-helpers",
+        "lines": "~273-430",
+        "symbols": ["holoMaterial()", "lineMaterial()", "catmull()", "resample()", "ringPoint()", "sweepMesh()", "sweepLines()", "edgesOf()", "geom() cache G+SHARED", "part()", "damp()", "easeOutBack()", "clamp()"],
+        "does": "Materiali olografici, sweep geometrici, cache delle geometrie condivise, damping frame-rate indipendente"
+      },
+      {
+        "name": "droid",
+        "lines": "~433-930",
+        "symbols": ["buildDroid(opt)", "panel()", "blipMesh()", "animateDroid()", "turnDome()", "buildAgentBody()", "ensureAgent()", "killAgent()", "activeAgents()", "freeSlot()", "markShared()"],
+        "does": "Droid procedurale (dome emisferico/conico per serie), lampade, alive/dead dopo 60s silenzio, slot orbitali + nesting euristico parent-child per timing"
+      },
+      {
+        "name": "workshop-room",
+        "lines": "~1034-1680",
+        "symbols": ["buildWorkshop()", "boxLines/addBox()", "station()", "pick()", "ringGeo()/turnRing()", "applyCamera()", "pickAt()/openStation()/closeStation()"],
+        "does": "Stanza, charging bay, workbench tiles da file-history-delta, bay ledger da cost-state, floor rings da turn_duration, block stack da queue-operation, perimetro amber da permission-mode, beam da cache/fresh ratio"
+      },
+      {
+        "name": "hud-ui",
+        "lines": "~1680-2070",
+        "symbols": ["renderReadout()/renderStation()/showReadout()/select()", "setMainTag()", "updateSpots()/placeTag()", "pushTick()", "bump()/fireRail()", "fleetSummary()/sessionRows()", "fmtN()/hhmm()"],
+        "does": "Rail 8 subsystem, readout specs, hotspot 3D->2D, agent callout, ticker eventi, sonar ping su prose senza subagent"
+      },
+      {
+        "name": "session-client",
+        "lines": "~2223-2350",
+        "symbols": ["loadSessions()/fillSelect()/labelFor()", "connect(path)", "resetAll()", "setLink()/rel()/shortCwd()"],
+        "does": "Dropdown 40 sessioni con refresh 30s, SSE backlog+events+ready+beat, resync stato"
+      },
+      {
+        "name": "props-loop",
+        "lines": "~2397-2960",
+        "symbols": ["propFor()/buildProp()/updateProps()", "resize()", "drainQueue()", "frame()", "syncRoam()/syncShop()/syncSpin()/syncScan()"],
+        "does": "Props proiettati per tool, patrol/orbit/scan toggles, render loop (nota: getElapsedTime vs getDelta footgun documentato in README)"
+      }
+    ]
+  },
+  "page_shell": {
+    "file": "public/index.html",
+    "dom": ["#stage canvas", "#emitter", "#spots", "#agents #main-tag", "#stations", "#veil/#vignette/#alarm", "#title #picker select#sessions #link", "nav#rail", "section#readout", "div#ticker", "div#console (Panel/Workshop/Patrol/Orbit/Scan/Reset/Info)", "#scrim #info modal"],
+    "css": "custom properties --proj/--good/--bad/--amber, responsive @980px (rail->bottom bar, readout->bottom sheet, ticker/hint hidden), prefers-reduced-motion"
+  },
+  "data_contracts": {
+    "sse_in": "Ev[] {t,kind,tool?,error?,sidechain?,id?,forId?,agent?,atype?,model?,tokens?,cache?,fresh?,ms?,path? (home-relative),op?,cost?}",
+    "sse_events": ["backlog (prelude+ultimi 220 ordinati)", "ready {path,agents,size}", "events Ev[] live", "beat {t}", "error {message}"],
+    "rest": ["GET /api/sessions -> SessionInfo[] {id,path,project,cwd,branch,title,size,mtime}", "GET /api/stream?path= -> text/event-stream"],
+    "privacy": "Mai prompt/output/diff: solo forma. Path home-relative, mai letti dal client"
+  },
+  "coupling_hotspots": [
+    "server.ts monolite: index + normalize + prelude + SSE + HTTP in un file, nessuna esportazione testabile",
+    "holotable.js monolite: data SYSTEMS + routing + three helpers + droid + room + HUD + client SSE + loop in una closure, stato condiviso via var globali",
+    "SYSTEMS duplicato: stessa tabella in holotable.js, index.html (modal info) e README (tabella moduli) — tre fonti da tenere a mano",
+    "moduleFor/seriesFor: mapping tool->modulo e model->serie hardcodati, senza fallback versionato",
+    "Nesting subagenti euristico su timing Task->nuovo file, dichiarato ma fragile",
+    "Costanti di tuning sparse (BACKLOG_AGENTS, RECENT_MS, 512KB, 1.2s, 60s fade, 20s third-leg) senza config unica",
+    "Nessun package.json/test/lint/CI: verifica = avvio manuale con bun"
+  ],
+  "risks": [
+    "fs.watch su macOS si addormenta (mitigato con poll, ma doppio trigger pump senza debounce oltre flag busy)",
+    "Prelude sweep fino a 512MB a chunk da 8MB su ogni connect — ok in decine di ms ma senza cache",
+    "Replay backlog taglia prima riga (shift) e riordina per t: orologi diversi tra agent possono riordinare male",
+    "getElapsedTime/getDelta e setSize(w,h,false) — footgun noti, documentati ma non blindati da helper unico",
+    "three.min.js r128 pinnato e vendored: nessun upgrade path"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "name": "r2-holo",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Holographic R2-D2 reacting live to a Claude Code session (Bun + vanilla JS + vendored Three.js)",
+  "scripts": {
+    "start": "bun run server.ts",
+    "dev": "PORT=8080 bun run server.ts",
+    "test": "bun test"
+  }
+}

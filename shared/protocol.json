@@ -1,0 +1,82 @@
+{
+  "$comment": "Source of truth for the R2 Holotable wire contract. server/types.ts is the typed mirror of this file; tests/contract.test.ts keeps them in sync.",
+  "event": {
+    "type": "object",
+    "required": ["t", "kind"],
+    "properties": {
+      "t": { "type": "number", "description": "unix ms from transcript timestamp (or Date.now fallback)" },
+      "kind": {
+        "type": "string",
+        "enum": ["tool", "result", "text", "user", "system", "mode", "title", "cost", "file", "queue"]
+      },
+      "tool": { "type": "string" },
+      "error": { "type": "boolean" },
+      "label": { "type": "string" },
+      "sidechain": { "type": "boolean" },
+      "id": { "type": "string", "description": "tool_use id" },
+      "forId": { "type": "string", "description": "tool_use_id on tool_result" },
+      "agent": { "type": "string", "description": "short agent id (6 chars from filename)" },
+      "atype": { "type": "string", "description": "agent TYPE (general-purpose, fork), not a parent id" },
+      "model": { "type": "string" },
+      "tokens": { "type": "number" },
+      "cache": { "type": "number" },
+      "fresh": { "type": "number" },
+      "effort": { "type": "string" },
+      "speed": { "type": "string" },
+      "ms": { "type": "number" },
+      "path": { "type": "string", "description": "home-relative trackingPath, never file contents" },
+      "op": { "type": "string", "description": "queue-operation: enqueue / dequeue / remove / popAll" },
+      "cost": { "$ref": "#/costDigest" }
+    }
+  },
+  "costDigest": {
+    "type": "object",
+    "properties": {
+      "usd": { "type": "number" },
+      "added": { "type": "number" },
+      "removed": { "type": "number" },
+      "toolMs": { "type": "number" },
+      "apiMs": { "type": "number" },
+      "durMs": { "type": "number" },
+      "models": {
+        "type": "array",
+        "maxItems": 4,
+        "items": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "usd": { "type": "number" },
+            "out": { "type": "number" },
+            "cr": { "type": "number" }
+          }
+        }
+      }
+    }
+  },
+  "transcriptMapping": {
+    "assistant.tool_use": "tool (+model, tokens, cache, fresh, effort, speed)",
+    "assistant.text": "text (non-blank only)",
+    "user.tool_result": "result (+error from is_error, forId)",
+    "user.other": "user",
+    "system": "system (+label=subtype, ms=durationMs)",
+    "permission-mode": "mode (+label)",
+    "custom-title|ai-title": "title (+label)",
+    "cost-state": "cost (+cost digest, top 4 models by usd)",
+    "file-history-delta": "file (+home-relative path only)",
+    "queue-operation": "queue (+op)"
+  },
+  "sse": {
+    "events": ["backlog", "ready", "events", "beat", "error"],
+    "backlog": "prelude[] + last BACKLOG_CAP (220) time-sorted events",
+    "ready": "{ path, agents, size }",
+    "beat": "{ t }",
+    "error": "{ message }"
+  },
+  "rest": {
+    "GET /api/sessions": "SessionInfo[] { id, path, project, cwd, branch, title, size, mtime }",
+    "GET /api/stream?path=": "text/event-stream; 403 outside ROOT, 404 missing file",
+    "GET /api/systems": "shared/systems.json (subsystem table)",
+    "GET /api/protocol": "this file"
+  },
+  "privacy": "Session content never leaves disk: no prompts, no tool output, no diffs. Only event shape + home-relative paths."
+}

@@ -1,0 +1,262 @@
+[
+  {
+    "id": "sns",
+    "tag": "SNS",
+    "name": "Video sensor",
+    "kind": "std",
+    "label": "VIDEO SENSOR",
+    "anchor": [
+      0,
+      3.15,
+      0.92
+    ],
+    "title": "Dome video sensor",
+    "note": "A fully maneuverable video sensor with 360° rotation and 0.85 m reach, backed by electromagnetic, heat, motion and life-form indicators. This is the module that moves when Claude Code looks: every read or search turns the dome.",
+    "specs": [
+      [
+        "Sensor",
+        "360° maneuverable video"
+      ],
+      [
+        "Reach",
+        "0.85 m"
+      ],
+      [
+        "Indicators",
+        "electromagnetic, heat, motion, life-form"
+      ],
+      [
+        "Transceiver",
+        "full-spectrum"
+      ]
+    ],
+    "tools": "Read, Grep, Glob, LS"
+  },
+  {
+    "id": "scp",
+    "tag": "SCP",
+    "name": "Scomp arm",
+    "kind": "std",
+    "label": "COMPUTER SCOMP LINK",
+    "anchor": [
+      0.45,
+      2.05,
+      1.1
+    ],
+    "title": "Computer interface arm",
+    "note": "The retractable arm R2 pushes into a data port to take a system over. Here it extends and spins on every shell command — the most honest equivalent of a <span>Bash</span> call there is.",
+    "specs": [
+      [
+        "Arm",
+        "retractable scomp link"
+      ],
+      [
+        "Reach",
+        "0.85 m"
+      ],
+      [
+        "Computer",
+        "Intellex IV"
+      ],
+      [
+        "Direct tap",
+        "retractable jack"
+      ],
+      [
+        "Welder",
+        "electric arc"
+      ]
+    ],
+    "tools": "Bash, BashOutput, KillShell"
+  },
+  {
+    "id": "man",
+    "tag": "MAN",
+    "name": "Manipulator",
+    "kind": "std",
+    "label": "FINE MANIPULATOR",
+    "anchor": [
+      -0.45,
+      1.78,
+      1.1
+    ],
+    "title": "Precision manipulator",
+    "note": "Three 360° joints and micrometer accuracy, for barely two kilos of payload. It is the surgical instrument, so it moves on writes and edits rather than on commands.",
+    "specs": [
+      [
+        "Joints",
+        "3 × 360°"
+      ],
+      [
+        "Accuracy",
+        "micrometer"
+      ],
+      [
+        "Payload",
+        "2 kg"
+      ],
+      [
+        "Heavy grasper",
+        "25 kg lift / 10 kg grip"
+      ],
+      [
+        "Tools",
+        "circular saw, arc welder"
+      ]
+    ],
+    "tools": "Write, Edit, MultiEdit, NotebookEdit"
+  },
+  {
+    "id": "trx",
+    "tag": "TRX",
+    "name": "Transceiver",
+    "kind": "std",
+    "label": "TRANSCEIVER",
+    "anchor": [
+      0.2,
+      4.1,
+      0
+    ],
+    "title": "Full-spectrum transceiver",
+    "note": "The antenna that talks to everything outside the hull. It lights up when the session reaches the network: searches, fetches, and calls into MCP servers.",
+    "specs": [
+      [
+        "Transceiver",
+        "full-spectrum"
+      ],
+      [
+        "Telecom",
+        "Imperial Navy and Corporate Sector protocols"
+      ],
+      [
+        "Library",
+        "ROM of repair schematics"
+      ]
+    ],
+    "tools": "WebSearch, WebFetch, MCP tools"
+  },
+  {
+    "id": "vck",
+    "tag": "VCK",
+    "name": "Projector",
+    "kind": "std",
+    "label": "VICKSVISC PROJECTOR",
+    "anchor": [
+      -0.38,
+      3.48,
+      0.58
+    ],
+    "title": "VicksVisc holographic recorder",
+    "note": "The projector that carried Leia's message. Here it is the module holding up the subagents: every time the session spawns one, R2 projects a smaller droid beside itself that works on its own.",
+    "specs": [
+      [
+        "Module",
+        "VicksVisc recorder/projector"
+      ],
+      [
+        "Memory",
+        "internal data bank"
+      ],
+      [
+        "Hold",
+        "internal cargo compartment"
+      ]
+    ],
+    "tools": "Task, subagents"
+  },
+  {
+    "id": "ext",
+    "tag": "EXT",
+    "name": "Extinguisher",
+    "kind": "alert",
+    "label": "FIRE EXTINGUISHER",
+    "anchor": [
+      0.58,
+      1.18,
+      1
+    ],
+    "title": "Onboard extinguisher",
+    "note": "The only emergency module R2 carries, and the only amber channel in this projection: it fires on <span>tool_result</span> entries flagged as errors. If it flashes often, something in the session is burning.",
+    "specs": [
+      [
+        "Module",
+        "internal fire extinguisher"
+      ],
+      [
+        "Trigger",
+        "tool_result with is_error"
+      ],
+      [
+        "Kit",
+        "electro-shock prod, tow cable"
+      ]
+    ],
+    "tools": "failed tool_result"
+  },
+  {
+    "id": "int",
+    "tag": "INT",
+    "name": "Intellex IV",
+    "kind": "std",
+    "label": "INTELLEX IV",
+    "anchor": [
+      0,
+      2.4,
+      -1
+    ],
+    "title": "Intellex IV computer",
+    "note": "Over 700 spacecraft configurations in memory and more than ten thousand operations per second. This is the thinking module: it moves when the model writes prose instead of calling tools, and it keeps the token count.",
+    "specs": [
+      [
+        "Computer",
+        "Intellex IV"
+      ],
+      [
+        "Configurations",
+        "700+ spacecraft"
+      ],
+      [
+        "Throughput",
+        "10,000+ MPF ops/s"
+      ],
+      [
+        "Speech",
+        "binary / droidspeak"
+      ]
+    ],
+    "tools": "model prose"
+  },
+  {
+    "id": "loc",
+    "tag": "LOC",
+    "name": "Locomotion",
+    "kind": "std",
+    "label": "LOCOMOTION",
+    "anchor": [
+      0,
+      0.38,
+      -0.2
+    ],
+    "title": "Tripod and third leg",
+    "note": "Two side legs and a retractable centre leg. Here the third leg deploys while the session is working and folds away when it goes quiet: the most readable status indicator the droid owns.",
+    "specs": [
+      [
+        "Height",
+        "0.96 m"
+      ],
+      [
+        "Manufacturer",
+        "Industrial Automaton"
+      ],
+      [
+        "Plating",
+        "durasteel"
+      ],
+      [
+        "Stance",
+        "two legs + retractable third"
+      ]
+    ],
+    "tools": "human turns, session activity"
+  }
+]
