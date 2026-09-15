@@ -13,18 +13,12 @@ bun test                   # 37 tests
 
 ## Screenshots
 
-<!-- Drop images in docs/img/ and point these at them. GitHub renders the
-     alt text until the file exists, so a missing shot degrades quietly. -->
+<img width="1641" height="837" alt="CleanShot 2026-09-15 at 15 54 05" src="https://github.com/user-attachments/assets/d214c2d4-041c-45d1-ad9b-a27f06c9e7a2" />
 
-| | |
-|---|---|
-| ![The bay, idle](docs/img/bay.png) | ![A subagent at a workshop station](docs/img/stations.png) |
-| ![A question, projected](docs/img/question.png) | ![First person](docs/img/first-person.png) |
+<img width="1641" height="837" alt="CleanShot 2026-09-15 at 15 58 32" src="https://github.com/user-attachments/assets/161c56b8-7ab9-4e37-be81-370d6eb71853" />
 
-The dropdown lists the 40 most recently active sessions from `~/.claude/projects`,
-with the title and cwd read out of each transcript rather than decoded from the
-folder name (which is ambiguous for paths like `poppix-lineareact`). The list
-refreshes every 30 seconds, so a session that wakes up climbs back to the top.
+<img width="1641" height="837" alt="CleanShot 2026-09-15 at 15 53 38" src="https://github.com/user-attachments/assets/c3db44ce-52d3-4905-aedc-f383dfdb7219" />
+
 
 ## What it reads
 
