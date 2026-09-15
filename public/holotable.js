@@ -154,6 +154,12 @@
   // turn after it. Anything else would be guesswork.
   var ASK_TOOLS = /^(AskUserQuestion|ExitPlanMode)$/;
   var mainTurnEnded = false;
+  /* The transcript marks a context compaction with a system line of subtype
+     compact_boundary. It is a marker, not a span — the compaction has already
+     happened by the time it lands — so the droid docks for a fixed stretch to
+     make the event visible rather than pretending to measure it. */
+  var CHARGE_MS = 15000;
+  var chargeUntil = 0;
   var PEND_MAX = 300000;      // give up on an unmatched call after 5 min
   var WAIT_WINDOW = 90000;    // after this, the session is genuinely idle
 
@@ -231,7 +237,7 @@
      =================================================================== */
   var stage = document.getElementById("stage");
   var scene = new THREE.Scene();
-  scene.fog = new THREE.FogExp2(0x03070e, 0.018);
+  scene.fog = new THREE.FogExp2(0x03070e, 0.012);
   var camera = new THREE.PerspectiveCamera(42, 1, 0.1, 400);
 
   var renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
@@ -924,7 +930,7 @@
       var P = AGENTS[parentId];
       P.kids = (P.kids || 0) + 1;
       var ca = (P.kids-1) * 1.25 + 0.6;
-      var cr = 2.7 * (P.targetScale/0.52);
+      var cr = 3.4 * (P.targetScale/0.52);
       anchor = new THREE.Vector3(Math.cos(ca)*cr, 0, Math.sin(ca)*cr); // vs parent
       wrap.position.set(P.wrap.position.x + anchor.x, 0,
                         P.wrap.position.z + anchor.z);
@@ -932,7 +938,7 @@
                                     P.wrap.position.x - wrap.position.x) + Math.PI/2;
     } else {
       var ang = (slot/SLOTS)*Math.PI*2 + 0.35;
-      var R = 5.6;
+      var R = 7.6;
       wrap.position.set(Math.cos(ang)*R, 0, Math.sin(ang)*R);
       wrap.rotation.y = -ang + Math.PI/2;      // face the centre
       anchor = wrap.position.clone();          // absolute home
@@ -993,7 +999,7 @@
   scene.add(gridGroup);
   (function(){
     var pts=[];
-    [1.4,2.8,4.2,5.6,7,8.4,9.8].forEach(function(r){
+    [2,4,6,8,10,12,14].forEach(function(r){
       var seg=72;
       for(var i=0;i<seg;i++){
         var a0=(i/seg)*Math.PI*2,a1=((i+1)/seg)*Math.PI*2;
@@ -1002,7 +1008,7 @@
     });
     for(var k=0;k<16;k++){
       var a=(k/16)*Math.PI*2;
-      pts.push(Math.cos(a)*1.4,0,Math.sin(a)*1.4, Math.cos(a)*9.8,0,Math.sin(a)*9.8);
+      pts.push(Math.cos(a)*2,0,Math.sin(a)*2, Math.cos(a)*14,0,Math.sin(a)*14);
     }
     var g=new THREE.BufferGeometry();
     g.setAttribute("position",new THREE.Float32BufferAttribute(pts,3));
@@ -1040,7 +1046,7 @@
 
   var scanRing;
   (function(){
-    var pts=[],seg=96,r=6.8;
+    var pts=[],seg=96,r=9.5;
     for(var i=0;i<seg;i++){
       var a0=(i/seg)*Math.PI*2,a1=((i+1)/seg)*Math.PI*2;
       pts.push(Math.cos(a0)*r,0,Math.sin(a0)*r, Math.cos(a1)*r,0,Math.sin(a1)*r);
@@ -1054,8 +1060,8 @@
   (function(){
     var n=340,arr=new Float32Array(n*3);
     for(var i=0;i<n;i++){
-      var r=4+Math.random()*15,a=Math.random()*Math.PI*2;
-      arr[i*3]=Math.cos(a)*r; arr[i*3+1]=Math.random()*9; arr[i*3+2]=Math.sin(a)*r;
+      var r=5+Math.random()*22,a=Math.random()*Math.PI*2;
+      arr[i*3]=Math.cos(a)*r; arr[i*3+1]=Math.random()*11; arr[i*3+2]=Math.sin(a)*r;
     }
     var g=new THREE.BufferGeometry();
     g.setAttribute("position",new THREE.BufferAttribute(arr,3));
@@ -1079,7 +1085,7 @@
     var wLine  = lineMaterial(PROJ, 0.30);
     var wFaint = lineMaterial(PROJ, 0.16);
     var wWarm  = lineMaterial(AMBER, 0.20);
-    workshop.scale.setScalar(0.74);   // pull the bay in around the holotable
+    workshop.scale.setScalar(1.0);    // full-size bay: it was getting cramped
 
     function boxLines(w,h,d){ return edgesOf(new THREE.BoxGeometry(w,h,d), 1); }
     function addBox(parent,w,h,d,pos,rotY,mat){
@@ -1130,7 +1136,7 @@
 
     // overhead gantry with a hook on a cable
     var gantry = new THREE.Group();
-    gantry.position.y = 7.6;
+    gantry.position.y = 11.6;
     workshop.add(gantry);
     [-3.2, 3.2].forEach(function(z){
       var r=new THREE.LineSegments(boxLines(17, 0.18, 0.18), wLine);
@@ -1149,7 +1155,7 @@
 
     // corner pylons
     [[-9.5,-9.5],[9.5,-9.5],[-9.5,9.5],[9.5,9.5]].forEach(function(c){
-      addBox(workshop, 0.4, 8.2, 0.4, [c[0], 4.1, c[1]], 0, wFaint);
+      addBox(workshop, 0.42, 13.4, 0.42, [c[0], 6.7, c[1]], 0, wFaint);
     });
 
     // diagnostic screen on a stand
@@ -1163,7 +1169,7 @@
     // glyph rain whose speed tracks how busy the session is.
     var monitor = (function(){
       var cv = document.createElement("canvas");
-      cv.width = 512; cv.height = 320;
+      cv.width = 512; cv.height = 256;      // a band, not a panel: it wraps
       var ctx = cv.getContext("2d");
       ctx.fillStyle = "#000"; ctx.fillRect(0,0,cv.width,cv.height);
 
@@ -1177,13 +1183,40 @@
 
       var tex = new THREE.CanvasTexture(cv);
       tex.minFilter = THREE.LinearFilter;
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.repeat.x = 3;                     // the readout reads from any side
       var mat = new THREE.MeshBasicMaterial({
-        map:tex, transparent:true, opacity:0.9,
+        map:tex, transparent:true, opacity:0.30,   // a haze, not a wall
         blending:THREE.AdditiveBlending, depthWrite:false, side:THREE.DoubleSide
       });
-      var mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.46, 1.48), mat);
-      mesh.position.set(0, 3.0, 0.07);
-      screen.add(mesh);
+      // A holo column at the heart of the bay, with the droids working
+      // around it. Open-ended and translucent, so it never blocks a sightline.
+      var COL_R = 1.7, COL_H = 7.4;
+      var column = new THREE.Group();
+      column.position.set(0, 0.10, 0);
+      scene.add(column);                    // outside the workshop: always on
+      var band = new THREE.Mesh(
+        new THREE.CylinderGeometry(COL_R, COL_R, COL_H, 40, 1, true), mat);
+      band.position.y = COL_H/2;
+      column.add(band);
+      (function(){                          // cap rings and a few uprights
+        var pts=[], seg=48;
+        [0.02, COL_H*0.5, COL_H].forEach(function(y){
+          for(var i=0;i<seg;i++){
+            var a0=(i/seg)*Math.PI*2, a1=((i+1)/seg)*Math.PI*2;
+            pts.push(Math.cos(a0)*COL_R, y, Math.sin(a0)*COL_R,
+                     Math.cos(a1)*COL_R, y, Math.sin(a1)*COL_R);
+          }
+        });
+        for(var u=0;u<8;u++){
+          var ua=(u/8)*Math.PI*2;
+          pts.push(Math.cos(ua)*COL_R, 0.02, Math.sin(ua)*COL_R,
+                   Math.cos(ua)*COL_R, COL_H, Math.sin(ua)*COL_R);
+        }
+        var cg=new THREE.BufferGeometry();
+        cg.setAttribute("position", new THREE.Float32BufferAttribute(pts,3));
+        column.add(new THREE.LineSegments(cg, lineMaterial(PROJ, 0.11)));
+      })();
 
       var acc = 0;
       function draw(dt, st, busy, events, errors){
@@ -1199,49 +1232,52 @@
           C.y += C.sp * (0.5 + busy*1.8) * dt;
           if(C.y > cv.height + 40){ C.y = -20; C.sp = 40 + Math.random()*90; }
           var ch = GLYPHS[(Math.random()*GLYPHS.length)|0];
-          ctx.fillStyle = "rgba(160,250,255,0.95)";          // bright head
+          ctx.fillStyle = "rgba(160,250,255,0.50)";          // bright head
           ctx.fillText(ch, c*COLW + 3, C.y);
-          ctx.fillStyle = "rgba(60,170,200,0.45)";           // dimmer trail
+          ctx.fillStyle = "rgba(60,170,200,0.20)";           // dimmer trail
           ctx.fillText(GLYPHS[(Math.random()*GLYPHS.length)|0], c*COLW + 3, C.y - 19);
         }
 
-        // readout panel on top, redrawn every frame so it never fades
-        ctx.fillStyle = "rgba(0,0,0,0.72)";
-        ctx.fillRect(0, 96, cv.width, 108);
-        ctx.strokeStyle = "rgba(95,227,255,0.55)";
+        // the readout band, redrawn every frame so it never fades away
+        ctx.fillStyle = "rgba(0,0,0,0.80)";
+        ctx.fillRect(0, 84, cv.width, 86);
+        ctx.strokeStyle = "rgba(95,227,255,0.5)";
         ctx.lineWidth = 2;
-        ctx.strokeRect(1, 97, cv.width-2, 106);
+        ctx.beginPath();
+        ctx.moveTo(0,85); ctx.lineTo(cv.width,85);
+        ctx.moveTo(0,169); ctx.lineTo(cv.width,169);
+        ctx.stroke();
 
-        ctx.fillStyle = st.mode === "run" ? "rgba(95,240,168,0.9)"
-                      : st.mode === "wait" ? "rgba(255,180,84,0.9)"
-                      : "rgba(95,227,255,0.7)";
-        ctx.font = "13px ui-monospace, Menlo, monospace";
-        ctx.fillText(st.head, 16, 122);
-        if(st.secs > 0){
-          ctx.textAlign = "right";
-          ctx.fillText(st.secs + "s", cv.width-16, 122);
-          ctx.textAlign = "left";
-        }
+        ctx.textAlign = "center";
+        ctx.fillStyle = st.mode === "run"  ? "rgba(95,240,168,0.95)"
+                      : st.mode === "wait" ? "rgba(255,180,84,0.95)"
+                      : st.mode === "ask"  ? "rgba(111,168,255,0.95)"
+                      : "rgba(95,227,255,0.75)";
+        ctx.font = "12px ui-monospace, Menlo, monospace";
+        ctx.fillText(st.head + (st.secs > 1 ? "   " + st.secs + "s" : ""), cv.width/2, 106);
 
         ctx.fillStyle = "#eaf7ff";
-        ctx.font = "bold 38px ui-monospace, Menlo, monospace";
+        ctx.font = "bold 30px ui-monospace, Menlo, monospace";
         var t = String(st.label || "—");
-        if(t.length > 17) t = t.slice(0,16) + "\u2026";
-        ctx.fillText(t, 16, 168);
+        if(t.length > 20) t = t.slice(0,19) + "\u2026";
+        ctx.fillText(t, cv.width/2, 140);
 
-        ctx.fillStyle = "rgba(139,163,184,0.8)";
-        ctx.font = "13px ui-monospace, Menlo, monospace";
-        ctx.fillText("EV " + events, 16, 194);
-        ctx.fillStyle = errors > 0 ? "rgba(255,95,109,0.9)" : "rgba(95,240,168,0.8)";
-        ctx.fillText("ERR " + errors, 110, 194);
+        ctx.font = "11px ui-monospace, Menlo, monospace";
+        ctx.fillStyle = "rgba(139,163,184,0.75)";
+        ctx.fillText("EV " + events, cv.width/2 - 52, 161);
+        ctx.fillStyle = errors > 0 ? "rgba(255,95,109,0.9)" : "rgba(95,240,168,0.75)";
+        ctx.fillText("ERR " + errors, cv.width/2 + 52, 161);
+        ctx.textAlign = "left";
 
         tex.needsUpdate = true;
       }
 
       return {
+        column: column,
         tick: function(dt, st, busy, events, errors){
+          column.rotation.y += dt * (0.16 + busy*0.30);   // the text goes round
           acc += dt;
-          if(acc < 0.055) return;      // ~18 fps is plenty for a prop
+          if(acc < 0.055) return;      // ~18 fps is plenty for a readout
           draw(Math.min(0.12, acc), st, busy, events, errors);
           acc = 0;
         }
@@ -1252,10 +1288,10 @@
     var mast = new THREE.Group();
     mast.position.set(-6.5, 0, 6.5);
     workshop.add(mast);
-    addBox(mast, 0.3, 6.4, 0.3, [0, 3.2, 0], 0, wFaint);
+    addBox(mast, 0.3, 9.4, 0.3, [0, 4.7, 0], 0, wFaint);
     [[0,1],[0.9,0.6],[-0.9,0.6]].forEach(function(o){
       var d=new THREE.LineSegments(boxLines(0.1, 1.5, 0.1), wLine);
-      d.position.set(o[0], 6.0, 0);
+      d.position.set(o[0], 8.9, 0);
       d.rotation.z = o[0]*0.5;
       mast.add(d);
     });
@@ -1269,9 +1305,32 @@
       var g2=new THREE.BufferGeometry();
       g2.setAttribute("position",new THREE.Float32BufferAttribute(pts,3));
       var dish=new THREE.LineSegments(g2, wLine);
-      dish.position.set(0, 5.1, 0);
+      dish.position.set(0, 7.8, 0);
       dish.rotation.x = -0.7;
       mast.add(dish);
+    })();
+
+    // Charging bay: where the droid docks while the context is compacted
+    var bay = new THREE.Group();
+    bay.position.set(0, 0, 10.4);
+    workshop.add(bay);
+    addBox(bay, 4.0, 0.22, 3.2, [0, 0.11, 0], 0, wLine);        // pad
+    [-1.8, 1.8].forEach(function(x){
+      addBox(bay, 0.26, 6.2, 0.26, [x, 3.1, -1.2], 0, wFaint);  // uprights
+    });
+    addBox(bay, 4.0, 0.26, 0.26, [0, 6.2, -1.2], 0, wLine);     // arch
+    [-1.0, 1.0].forEach(function(x){
+      addBox(bay, 0.5, 0.5, 0.9, [x, 5.0, -0.9], 0, wWarm);     // emitters
+    });
+    (function(){                                                 // pad markings
+      var pts=[];
+      for(var i=0;i<6;i++){
+        var z=-1.2+i*0.5;
+        pts.push(-1.6, 0.24, z, 1.6, 0.24, z);
+      }
+      var g4=new THREE.BufferGeometry();
+      g4.setAttribute("position", new THREE.Float32BufferAttribute(pts,3));
+      bay.add(new THREE.LineSegments(g4, wWarm));
     })();
 
     /* Each fixture is a STATION for a class of work. When the bay is up the
@@ -1297,16 +1356,36 @@
     }
     // fixtures live in a group scaled to 0.74, so stations are given in world
     var STATIONS = {
-      read:  station("read",  [-4.3,-1.2], [-5.7, 2.5,-1.5], [-6.07,-1.63], 1.9),
-      write: null,
-      term:  station("term",  [ 1.4,-4.0], [ 1.9, 3.0,-5.5], [ 1.92,-5.92], 1.7),
-      index: station("index", [ 3.9,-1.8], [ 5.3, 2.4,-2.4], [ 5.62,-2.52], 1.9),
-      globe: station("globe", [-3.4, 3.4], [-4.7, 3.6, 4.7], [-4.81, 4.81], 1.8)
+      read:   station("read",   [-5.8,-1.6], [-7.6, 2.6,-2.0], [-8.2,-2.2], 2.5),
+      write:  null,
+      term:   station("term",   [ 1.8,-5.6], [ 2.5, 3.2,-7.4], [ 2.6,-8.0], 2.3),
+      index:  station("index",  [ 5.4,-2.4], [ 7.2, 2.6,-3.2], [ 7.6,-3.0], 2.5),
+      globe:  station("globe",  [-4.6, 4.6], [-6.2, 4.2, 6.2], [-6.5, 6.5], 2.5),
+      charge: station("charge", [ 0.0, 8.6], [ 0.0, 3.6,10.6], [ 0.0,10.4], 3.0)
     };
     STATIONS.write = STATIONS.read;                      // same bench
 
+    (function(){                       // ceiling web: gives the room a top
+      var pts=[], seg=64;
+      [5,9,13].forEach(function(r){
+        for(var i=0;i<seg;i++){
+          var a0=(i/seg)*Math.PI*2, a1=((i+1)/seg)*Math.PI*2;
+          pts.push(Math.cos(a0)*r, 0, Math.sin(a0)*r, Math.cos(a1)*r, 0, Math.sin(a1)*r);
+        }
+      });
+      for(var k3=0;k3<12;k3++){
+        var a3=(k3/12)*Math.PI*2;
+        pts.push(Math.cos(a3)*5,0,Math.sin(a3)*5, Math.cos(a3)*13,0,Math.sin(a3)*13);
+      }
+      var cg2=new THREE.BufferGeometry();
+      cg2.setAttribute("position", new THREE.Float32BufferAttribute(pts,3));
+      var ceil=new THREE.LineSegments(cg2, wFaint);
+      ceil.position.y = 13.4;
+      workshop.add(ceil);
+    })();
+
     workshop.userData = { trolley:trolley, hook:hook, monitor:monitor,
-                          stations:STATIONS, mast:mast };
+                          stations:STATIONS, mast:mast, bay:bay };
   })();
 
   /* ===================================================================
@@ -1320,13 +1399,13 @@
   };
   var roamOn = !reduce;
 
-  var cam = {theta:0.62, phi:1.18, radius:15.5, target:new THREE.Vector3(0,1.9,0)};
-  var HOME = {theta:0.62, phi:1.18, radius:15.5};
+  var cam = {theta:0.62, phi:1.09, radius:25, target:new THREE.Vector3(0,3.2,0)};
+  var HOME = {theta:0.62, phi:1.09, radius:25};
   var autoSpin = !reduce;
 
   function applyCamera(){
     cam.phi = clamp(cam.phi, 0.22, Math.PI-0.22);
-    cam.radius = clamp(cam.radius, 5, 40);
+    cam.radius = clamp(cam.radius, 6, 60);
     var s=Math.sin(cam.phi);
     camera.position.set(
       cam.target.x + cam.radius*s*Math.sin(cam.theta),
@@ -1603,6 +1682,9 @@
       route(ev, A.mod, A.r2);
       bump(MOD,"vck",0.10);
     } else {
+      if(ev.kind==="system" && ev.label === "compact_boundary"){
+        chargeUntil = Date.now() + CHARGE_MS;
+      }
       if(ev.kind==="system" && /turn_duration|stop_hook_summary/.test(ev.label||"")){
         mainTurnEnded = true;          // turn closed: the ball is in our court
       } else if(ev.kind!=="mode" && ev.kind!=="title"){
@@ -1950,6 +2032,25 @@
     };
   }
 
+  /* Energy rings climbing the hull while it charges. */
+  var CHARGE_RINGS = [];
+  (function(){
+    var pts=[], seg=40, R=1.25;
+    for(var i=0;i<seg;i++){
+      var a0=(i/seg)*Math.PI*2, a1=((i+1)/seg)*Math.PI*2;
+      pts.push(Math.cos(a0)*R,0,Math.sin(a0)*R, Math.cos(a1)*R,0,Math.sin(a1)*R);
+    }
+    var g=new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.Float32BufferAttribute(pts,3));
+    for(var r=0;r<4;r++){
+      var m=lineMaterial(new THREE.Color(0xbff4ff), 0);
+      var o=new THREE.LineSegments(g,m);
+      o.visible=false;
+      scene.add(o);
+      CHARGE_RINGS.push({obj:o, mat:m, off:r/4});
+    }
+  })();
+
   var propDir=new THREE.Vector3(), propRight=new THREE.Vector3(), propAnchor=new THREE.Vector3();
   /* Props are placed to the camera's right of their droid and billboarded,
      so they never end up hidden behind the unit that is projecting them. */
@@ -2043,16 +2144,24 @@
 
     /* If the bay is up and the tool has a station, that fixture is where the
        work happens: the droid drives there and the prop mounts on it. */
+    var charging = nowMs < chargeUntil;
     var stKind = inflight ? propFor(inflight.tool) : null;
     var station = (shopOn && stKind && workshop.userData.stations)
                     ? workshop.userData.stations[stKind] : null;
+    if(charging && workshop.userData.stations){
+      station = workshop.userData.stations.charge;   // docking wins
+    }
 
     var errRecent = MOD.ext.p > 0.25;
     var asking = isAsk(mainPend) || (!inflight && mainTurnEnded);
-    setLamps(MAIN, {err:errRecent, ask:asking,
-                    wait:waiting && !asking, idle:idle && !asking}, dt);
+    setLamps(MAIN, {err:errRecent && !charging, ask:asking && !charging,
+                    wait:(waiting || charging) && !asking,
+                    idle:idle && !asking && !charging}, dt);
 
-    var status = inflight
+    var status = charging
+      ? { head:"RECHARGING", label:"context compaction",
+          secs:Math.round((chargeUntil-nowMs)/1000), mode:"charge" }
+      : inflight
       ? { head:"RUNNING", label:inflight.tool, secs:Math.round((nowMs-inflight.at)/1000), mode:"run" }
       : waiting
       ? { head:"WAITING ON MODEL", label:live.lastTool, secs:Math.round(sinceLast/1000), mode:"wait" }
@@ -2068,15 +2177,17 @@
     if(station){
       roam.target.copy(station.stand);
       roam.next = 2.5;                       // resume wandering once it ends
+    } else if(charging){
+      roam.target.set(0, 0, 8.6);            // dock even with the bay hidden
     } else if(roamOn && !idle){
       roam.next -= dt;
       if(roam.next <= 0){
-        var ra = Math.random()*Math.PI*2, rr = 0.9 + Math.random()*2.5;
+        var ra = Math.random()*Math.PI*2, rr = 3.0 + Math.random()*2.0;
         roam.target.set(Math.cos(ra)*rr, 0, Math.sin(ra)*rr);
         roam.next = 6 + Math.random()*9;
       }
     } else {
-      roam.target.set(0,0,0);
+      roam.target.set(0, 0, 3.4);   // parks beside the column, not inside it
     }
 
     // light the station he is working at, dim the rest
@@ -2112,10 +2223,14 @@
     );
     droid.rotation.y = roam.heading;
     droid.rotation.z = roam.bank;
+    if(charging){                     // docked: faces the arch, sits low
+      MAIN.squash.scale.y = damp(MAIN.squash.scale.y, 0.94, 4, dt);
+      MAIN.domeTarget = damp(MAIN.domeTarget, 0, 3, dt);
+    }
 
     // keep him loosely framed instead of letting him wander out of shot
-    cam.target.x = damp(cam.target.x, roam.pos.x*0.65, 1.6, dt);
-    cam.target.z = damp(cam.target.z, roam.pos.z*0.65, 1.6, dt);
+    cam.target.x = damp(cam.target.x, roam.pos.x*0.55, 1.6, dt);
+    cam.target.z = damp(cam.target.z, roam.pos.z*0.55, 1.6, dt);
     applyCamera();
 
     alarmEl.style.opacity = (ex*0.45).toFixed(3);
@@ -2237,6 +2352,17 @@
       }
     }
 
+    /* --- charging: rings climb the hull while it sits on the pad --- */
+    for(var ci=0; ci<CHARGE_RINGS.length; ci++){
+      var CR = CHARGE_RINGS[ci];
+      if(!charging){ CR.obj.visible = false; continue; }
+      CR.obj.visible = true;
+      var f = ((t*0.45 + CR.off) % 1);
+      CR.obj.position.set(droid.position.x, f*4.6, droid.position.z);
+      CR.obj.scale.setScalar(1.05 - f*0.35);
+      CR.mat.opacity = 0.55 * Math.sin(f*Math.PI);
+    }
+
     /* --- ground shockwaves --- */
     for(var wi=0; wi<WAVES.length; wi++){
       var W=WAVES[wi];
@@ -2255,8 +2381,10 @@
       W.hook.position.x = slide;
       W.hook.position.y = -2.85 + Math.sin(t*0.5)*0.18;
       W.hook.rotation.y = t*0.25;
+    }
+    if(workshop.userData.monitor){
       var busy = Math.min(1, MOD.scp.p + MOD.man.p + MOD.sns.p + MOD.int.p*0.5);
-      W.monitor.tick(dt, status, busy, live.events, live.errors);
+      workshop.userData.monitor.tick(dt, status, busy, live.events, live.errors);
     }
 
     if(scanOn){
