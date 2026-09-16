@@ -265,7 +265,8 @@
   // instead of leaving a blank stage and an exception in the console.
   var renderer;
   try {
-    renderer = new THREE.WebGLRenderer({antialias:true, alpha:true});
+    renderer = new THREE.WebGLRenderer({antialias:true, alpha:true,
+                                        preserveDrawingBuffer:true});
   } catch(e){
     stage.innerHTML = '<div style="padding:2rem;color:#9df2ff;font:14px/1.6 system-ui">'+
       '<strong>WebGL is not available in this browser.</strong><br>'+
@@ -2461,7 +2462,11 @@
     return false;
   }
 
+  var rebuilding = false;   // true while replay re-applies history
   function handle(ev, silent){
+    // record once, on the way in. Skipped during a rebuild, or history
+    // would grow by its own length every time you scrub.
+    if(!rebuilding) histPush(ev);
     live.events++;
     live.lastAt = Date.now();
     // wake-up snap: a live event after long silence startles it awake
@@ -2740,6 +2745,141 @@
   btnReset.addEventListener("click",function(){
     cam.theta=HOME.theta; cam.phi=HOME.phi; cam.radius=HOME.radius; applyCamera();
   });
+  /* --- recording ----------------------------------------------------
+     MediaRecorder over the canvas stream. No library, no server round
+     trip: the file is built in the page and handed to the browser. The
+     container is whatever the browser will give us — webm nearly
+     everywhere, mp4 on recent Safari — so the type is probed, not assumed. */
+  var rec = { mr:null, chunks:[], on:false, startedAt:0 };
+  function recMime(){
+    if(typeof MediaRecorder === "undefined") return null;
+    var want = ["video/webm;codecs=vp9", "video/webm;codecs=vp8",
+                "video/webm", "video/mp4"];
+    for(var i=0;i<want.length;i++){
+      if(MediaRecorder.isTypeSupported(want[i])) return want[i];
+    }
+    return null;
+  }
+  function recStop(){
+    if(!rec.on || !rec.mr) return;
+    rec.mr.stop();                       // the rest happens in onstop
+  }
+  function recStart(){
+    var mime = recMime();
+    if(!mime){
+      setLink("err", "recording unsupported");
+      return;
+    }
+    var stream;
+    try {
+      stream = renderer.domElement.captureStream(30);
+    } catch(e){
+      setLink("err", "capture blocked");
+      return;
+    }
+    rec.chunks = [];
+    try {
+      rec.mr = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 8e6 });
+    } catch(e){
+      setLink("err", "recorder failed");
+      return;
+    }
+    rec.mr.ondataavailable = function(e){
+      if(e.data && e.data.size) rec.chunks.push(e.data);
+    };
+    rec.mr.onstop = function(){
+      var blob = new Blob(rec.chunks, { type: mime.split(";")[0] });
+      var ext  = mime.indexOf("mp4") >= 0 ? "mp4" : "webm";
+      var url  = URL.createObjectURL(blob);
+      var a    = document.createElement("a");
+      var d    = new Date();
+      a.href = url;
+      a.download = "r2-holo-" + d.toISOString().slice(0,19).replace(/[:T]/g,"-") + "." + ext;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      // let the download start before the blob goes away
+      setTimeout(function(){ URL.revokeObjectURL(url); }, 10000);
+      rec.on = false; rec.chunks = []; rec.mr = null;
+      syncRecUI();
+    };
+    rec.mr.start(250);                  // timeslice: survive a long take
+    rec.on = true;
+    rec.startedAt = Date.now();
+    syncRecUI();
+  }
+  var btnRec = document.getElementById("btn-rec");
+  var recDot = document.getElementById("rec-dot");
+  var recLabel = document.getElementById("rec-label");
+  function syncRecUI(){
+    btnRec.setAttribute("aria-pressed", rec.on ? "true" : "false");
+    recDot.dataset.on = rec.on ? "1" : "0";
+    recLabel.textContent = rec.on ? "Stop" : "Record";
+  }
+  btnRec.addEventListener("click", function(){
+    if(rec.on) recStop(); else recStart();
+  });
+  if(typeof MediaRecorder === "undefined"){
+    btnRec.disabled = true;
+    btnRec.title = "This browser cannot record the canvas";
+  }
+
+  /* --- replay transport ------------------------------------------- */
+  var transport = document.getElementById("transport");
+  var btnReplay = document.getElementById("btn-replay");
+  var btnPlay   = document.getElementById("btn-play");
+  var btnSpeed  = document.getElementById("btn-speed");
+  var btnLive   = document.getElementById("btn-live");
+  var scrub     = document.getElementById("scrub");
+  var tstamp    = document.getElementById("tstamp");
+  var SPEEDS = [1, 2, 4, 8];
+
+  function clockOf(ms){
+    var d = new Date(ms);
+    return String(d.getHours()).padStart(2,"0") + ":" +
+           String(d.getMinutes()).padStart(2,"0") + ":" +
+           String(d.getSeconds()).padStart(2,"0");
+  }
+  function syncReplayUI(){
+    var span = histSpan();
+    btnReplay.setAttribute("aria-pressed", replay.on ? "true" : "false");
+    transport.dataset.open = replay.on ? "1" : "0";
+    btnPlay.innerHTML = replay.playing ? "&#10074;&#10074;" : "&#9654;";
+    btnSpeed.textContent = replay.speed + "\u00d7";
+    if(!replay.on){
+      scrub.value = 1000;
+      tstamp.textContent = "live";
+      return;
+    }
+    var total = Math.max(1, span[1] - span[0]);
+    if(document.activeElement !== scrub){
+      scrub.value = Math.round(((replay.at - span[0]) / total) * 1000);
+    }
+    tstamp.textContent = clockOf(replay.at);
+  }
+  btnReplay.addEventListener("click", function(){
+    if(replay.on) exitReplay();
+    else enterReplay(histSpan()[0]);
+  });
+  btnPlay.addEventListener("click", function(){
+    if(!replay.on) return;
+    replay.playing = !replay.playing;
+    syncReplayUI();
+  });
+  btnSpeed.addEventListener("click", function(){
+    var i = SPEEDS.indexOf(replay.speed);
+    replay.speed = SPEEDS[(i + 1) % SPEEDS.length];
+    syncReplayUI();
+  });
+  btnLive.addEventListener("click", exitReplay);
+  scrub.addEventListener("input", function(){
+    if(!replay.on) enterReplay();
+    var span = histSpan();
+    replay.at = span[0] + (scrub.value/1000) * Math.max(1, span[1]-span[0]);
+    rebuildTo(replay.at);
+    syncReplayUI();
+  });
+
   btnInfo.addEventListener("click",function(){
     scrim.dataset.open="1"; document.getElementById("info-close").focus();
   });
@@ -3245,8 +3385,43 @@
   /* The poll delivers a batch every 1.2 s, so firing them all on one frame
      produces a spike followed by dead air. Spreading the batch across the
      interval turns it back into a sequence you can actually read. */
+  /* --- history and replay -------------------------------------------
+     Every event that has ever been applied, kept in arrival order. State
+     here is cumulative (tokens, counters, live droids) and handle() has no
+     inverse, so scrubbing backwards is done by resetting and re-applying
+     from the start up to the chosen instant — slow-looking, but it is the
+     only way to land on a state that is actually correct. */
+  var HIST = [], HIST_CAP = 20000;
+  var replay = { on:false, at:0, speed:1, playing:true, acc:0 };
+  function histPush(ev){
+    HIST.push(ev);
+    if(HIST.length > HIST_CAP) HIST.splice(0, HIST.length - HIST_CAP);
+  }
+  function histSpan(){
+    if(!HIST.length) return [0, 0];
+    return [HIST[0].t || 0, HIST[HIST.length-1].t || 0];
+  }
+  /* How many leading events fall at or before tMs. History is already in
+     time order, so this is the cut point for a rebuild. Split out because
+     an off-by-one here silently replays the wrong world. */
+  function histCount(hist, tMs){
+    var n = 0;
+    for(var i=0; i<hist.length; i++){
+      if((hist[i].t || 0) > tMs) break;
+      n++;
+    }
+    return n;
+  }
+
   var QUEUE=[], qAcc=0;
   function drainQueue(dt){
+    // In replay the present must not be shown, but it must not be lost
+    // either: park arriving events straight into history so the timeline
+    // keeps growing and exiting replay lands on a current world.
+    if(replay.on){
+      while(QUEUE.length) histPush(QUEUE.shift());
+      return;
+    }
     if(!QUEUE.length) return;
     qAcc += dt;
     var step = clamp(1.1/QUEUE.length, 0.06, 0.30);
@@ -3257,6 +3432,63 @@
       step = clamp(1.1/Math.max(1,QUEUE.length), 0.06, 0.30);
     }
     renderReadout();
+  }
+
+  function enterReplay(atMs){
+    if(!HIST.length) return;
+    var span = histSpan();
+    replay.on = true;
+    replay.playing = true;
+    replay.at = (atMs === undefined) ? span[0] : clamp(atMs, span[0], span[1]);
+    rebuildTo(replay.at);
+    syncReplayUI();
+  }
+  function exitReplay(){
+    if(!replay.on) return;
+    replay.on = false;
+    replay.playing = true;
+    // live state is whatever the full history says, which is where the
+    // stream will carry on from
+    var span = histSpan();
+    rebuildTo(span[1]);
+    syncReplayUI();
+  }
+
+  /* Rebuild the world as it stood at time T. resetAll() clears the droids
+     and counters, then every event up to T is re-applied silently (no
+     sound, no wake-up snaps — this is a reconstruction, not live news). */
+  function rebuildTo(tMs){
+    rebuilding = true;
+    resetAll();
+    QUEUE.length = 0; qAcc = 0;
+    mainPend = {};
+    var n = histCount(HIST, tMs);
+    for(var i=0; i<n; i++) handle(HIST[i], true);
+    // the tail of the ticker is what a human reads first: refill it
+    var from = Math.max(0, n-9);
+    for(var k=from; k<n; k++) pushTick(HIST[k], true);
+    rebuilding = false;
+    renderReadout();
+    return n;
+  }
+
+  /* Replay advances its own clock over the recorded span. At the right
+     edge it hands control back to the live stream. */
+  function stepReplay(dt){
+    if(!replay.on || !replay.playing) return;
+    var span = histSpan();
+    replay.at += dt * 1000 * replay.speed;
+    if(replay.at >= span[1]){          // caught up: back to live
+      replay.at = span[1];
+      exitReplay();
+      return;
+    }
+    replay.acc += dt;
+    if(replay.acc >= 0.1){             // 10 Hz is plenty for a rebuild
+      replay.acc = 0;
+      rebuildTo(replay.at);
+      syncReplayUI();
+    }
   }
 
   function frame(){
@@ -3272,6 +3504,7 @@
     if(autoSpin){ cam.theta += 0.10*dt; }
 
     drainQueue(dt);
+    stepReplay(dt);
 
     var decay = Math.exp(-1.9*dt);
     MODKEYS.forEach(function(k){ MOD[k].p *= decay; });

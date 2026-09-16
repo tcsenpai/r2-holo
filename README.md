@@ -8,7 +8,7 @@ is vendored and there are no dependencies.
 ```
 bun run server.ts          # http://127.0.0.1:4242
 PORT=8080 bun run server.ts
-bun test                   # 37 tests
+bun test                   # 44 tests
 ```
 
 ## Screenshots
@@ -86,6 +86,24 @@ Only the asking droid stops. The rest of the bay keeps working, and that
 contrast is the whole point: one unit standing still among moving ones is easy
 to spot.
 
+## Replay and recording
+
+**Replay** puts a transport over everything the page has received since it
+connected: drag the scrubber, or play it back at 1× to 8×. The stream keeps
+arriving and keeps being recorded while you are in the past, so **Live** returns
+to a current world rather than a stale one.
+
+Scrubbing rebuilds instead of rewinding. The state is cumulative — tokens,
+counters, which droids exist — and `handle()` has no inverse, so the page resets
+and re-applies history up to the instant you picked. `histCount()` decides where
+that cut falls, and `tests/replay.test.ts` covers it: an off-by-one there throws
+nothing, it just replays a world that is one event wrong.
+
+**Record** captures the canvas with `MediaRecorder` and hands you the file when
+you stop. The container is whatever the browser supports, webm in most and mp4
+on recent Safari. It records in real time, so the way to get a short video of a
+long session is to record a replay at 4×.
+
 ## Module mapping
 
 Every subsystem is a documented piece of R2-series equipment, mapped to the kind
@@ -157,7 +175,7 @@ shared/systems.json    R2 subsystem definitions
 public/index.html      layout, palette, info modal
 public/holotable.js    procedural model, rig, reactions
 public/three.min.js    r128, served locally (no CDN)
-tests/                 contract, normalisation, escaping, guards
+tests/                 contract, normalisation, escaping, guards, replay
 ```
 
 Splitting the wire format across two files invites them to drift apart, so

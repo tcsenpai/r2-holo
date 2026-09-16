@@ -225,6 +225,32 @@
   .btn:hover{color:var(--ink);border-color:var(--proj-dim);}
   .btn:focus-visible{outline:1px solid var(--proj);outline-offset:1px;}
   .btn[aria-pressed="true"]{color:#03070e;background:var(--proj);border-color:var(--proj);}
+  /* ---------- replay + capture ---------- */
+  #transport{
+    position:absolute;left:0;right:0;bottom:44px;z-index:6;
+    display:none;align-items:center;gap:10px;padding:8px 20px;
+    font-family:var(--f-mono);font-size:10px;letter-spacing:.1em;color:var(--ink-mute);
+  }
+  #transport[data-open="1"]{display:flex;}
+  #scrub{
+    flex:1;appearance:none;height:3px;background:var(--line);cursor:pointer;
+  }
+  #scrub::-webkit-slider-thumb{
+    appearance:none;width:11px;height:11px;border-radius:50%;
+    background:var(--proj);cursor:pointer;
+  }
+  #scrub::-moz-range-thumb{
+    width:11px;height:11px;border:0;border-radius:50%;background:var(--proj);cursor:pointer;
+  }
+  #tstamp{min-width:82px;color:var(--ink);}
+  #rec-dot{
+    display:none;width:7px;height:7px;border-radius:50%;background:#ff5a5a;
+    animation:recpulse 1.1s ease-in-out infinite;
+  }
+  #rec-dot[data-on="1"]{display:inline-block;}
+  @keyframes recpulse{0%,100%{opacity:1}50%{opacity:.25}}
+  @media (prefers-reduced-motion: reduce){ #rec-dot{animation:none;} }
+
   #hint{margin-left:auto;font-family:var(--f-mono);font-size:10px;letter-spacing:.1em;color:#3f5568;}
 
   /* ---------- modal ---------- */
@@ -288,6 +314,15 @@
   <section id="readout" role="tabpanel" aria-live="polite"></section>
   <div id="ticker"></div>
 
+  <div id="transport" data-open="0">
+    <button class="btn" id="btn-play" aria-label="Play or pause replay">&#9654;</button>
+    <input type="range" id="scrub" min="0" max="1000" value="1000"
+           aria-label="Scrub through the session">
+    <span id="tstamp">live</span>
+    <button class="btn" id="btn-speed">1&times;</button>
+    <button class="btn" id="btn-live">Live</button>
+  </div>
+
   <div id="console">
     <button class="btn" id="btn-panel" aria-pressed="true">Panel</button>
     <button class="btn" id="btn-shop" aria-pressed="true">Workshop</button>
@@ -296,6 +331,8 @@
     <button class="btn" id="btn-scan" aria-pressed="true">Scan</button>
     <button class="btn" id="btn-sound" aria-pressed="false">Sound</button>
     <button class="btn" id="btn-view" aria-pressed="false">View: Orbit</button>
+    <button class="btn" id="btn-replay" aria-pressed="false">Replay</button>
+    <button class="btn" id="btn-rec" aria-pressed="false"><span id="rec-dot"></span><span id="rec-label">Record</span></button>
     <button class="btn" id="btn-reset">Reset view</button>
     <button class="btn" id="btn-info" aria-haspopup="dialog">Info</button>
     <div id="hint">Drag to orbit &middot; scroll to zoom &middot; WASD to fly, Q/E height, Shift boost, R recenter</div>
@@ -343,6 +380,11 @@
       <h3>When it asks you something</h3>
       <p>A droid waiting on an answer stops where it is, turns to face you and holds the question up: a plate carried in front of the dome on a cone of light, a question bar over a short list of choices, a caret walking the options. It is an unstable projection on purpose &mdash; scan lines crawl, the beat flickers and occasionally drops out, the whole plate drifts &mdash; because a steady rectangle reads as a label stuck on the screen rather than something the droid is projecting.</p>
       <p><b>The panel carries no text.</b> The wording of the question never leaves your disk, so what you see is that there <em>is</em> a question and roughly how many ways it can go, not what it says. Only the droid that asked stops; everything else in the bay carries on working, so a stalled unit stands out against the movement rather than freezing the room. Under <span class="code">prefers-reduced-motion</span> the plate holds steady.</p>
+
+      <h3>Replay and recording</h3>
+      <p><b>Replay</b> opens a transport over everything the page has received since you connected &mdash; the backlog the server replays on connect, plus whatever has arrived since. Drag the scrubber to land anywhere in that span, or let it play at 1&times; to 8&times;. Events that keep arriving while you are in the past are still recorded, so <b>Live</b> always returns to a current world rather than a stale one.</p>
+      <p>Scrubbing rebuilds rather than rewinds: the state here is cumulative (tokens, counters, which droids exist) and there is no way to un-apply an event, so the page resets and re-applies history up to the instant you picked. That is why it lands on a state that is actually correct instead of approximately correct.</p>
+      <p><b>Record</b> captures the canvas to a video file and hands it to your browser when you stop. The container is whatever the browser supports &mdash; webm in most, mp4 on recent Safari. It records in real time, so recording a replay at 4&times; is the way to get a short video of a long session.</p>
 
       <h3>Moving around</h3>
       <ul>
