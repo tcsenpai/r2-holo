@@ -4,6 +4,7 @@ import { stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import {
   ROOT,
+  MAX_SESSIONS,
   BACKLOG_AGENTS,
   RECENT_MS,
   BACKLOG_PARENT_BYTES,
@@ -34,14 +35,29 @@ export function splitTailLines(text: string, truncated: boolean): string[] {
   return lines;
 }
 
-export function streamSession(parentPath: string): Response {
-  const subDir = subDirOf(parentPath);
+/**
+ * One SSE connection, one or many sessions.
+ *
+ * Browsers cap HTTP/1.1 at six connections per origin, so a room showing
+ * every active session cannot open one stream each — the seventh silently
+ * never connects. Multiplexing here keeps that ceiling out of the client:
+ * events carry `ses`, the session path they came from, and a single
+ * session behaves exactly as it did before.
+ */
+export function streamSession(paths: string | string[]): Response {
+  const sessions = (Array.isArray(paths) ? paths : [paths]).slice(0, MAX_SESSIONS);
+  const parentPath = sessions[0];
   let watchers: FSWatcher[] = [];
   let closed = false;
   let poll: ReturnType<typeof setInterval> | null = null;
   let beat: ReturnType<typeof setInterval> | null = null;
 
-  const tracked = new Map<string, { offset: number; rest: string; agent?: string }>();
+  // `ses` is the session a file belongs to: the parent's own path, carried
+  // on every event so the client can route it to the right droid.
+  const tracked = new Map<
+    string,
+    { offset: number; rest: string; agent?: string; ses: string }
+  >();
 
   const stop = () => {
     closed = true;
@@ -63,51 +79,69 @@ export function streamSession(parentPath: string): Response {
         } catch {}
       };
 
-      // --- session-wide state that lives outside the tail window ---
-      const pre = await prelude(parentPath);
+      // --- per session: prelude, parent tail, subagent tails ---
+      // The backlog cap is per session, not shared: one busy session must not
+      // starve the others out of the window.
+      const pre: Ev[] = [];
       const backlog: Ev[] = [];
+      const opened: { path: string; agents: number; size: number }[] = [];
 
-      // --- parent backlog ---
-      let parentSize = 0;
-      try {
-        const { text, size } = await readTail(parentPath, BACKLOG_PARENT_BYTES);
-        parentSize = size;
-        tracked.set(parentPath, { offset: size, rest: "" });
-        for (const l of splitTailLines(text, size > BACKLOG_PARENT_BYTES)) backlog.push(...normalize(l));
-      } catch (e) {
-        send("error", { message: String(e) });
-      }
+      for (const ses of sessions) {
+        const sesSubDir = subDirOf(ses);
+        const mine: Ev[] = [];
 
-      // --- subagents: replay only the freshest, the rest start at EOF ---
-      const subs = await listSubFiles(subDir);
-      const stats: { path: string; size: number; mtime: number }[] = [];
-      for (const p of subs) {
+        for (const e of await prelude(ses)) pre.push({ ...e, ses });
+
+        let parentSize = 0;
         try {
-          const s = await stat(p);
-          stats.push({ path: p, size: s.size, mtime: s.mtimeMs });
-        } catch {}
-      }
-      stats.sort((a, b) => b.mtime - a.mtime);
+          const { text, size } = await readTail(ses, BACKLOG_PARENT_BYTES);
+          parentSize = size;
+          tracked.set(ses, { offset: size, rest: "", ses });
+          for (const l of splitTailLines(text, size > BACKLOG_PARENT_BYTES)) mine.push(...normalize(l));
+        } catch (e) {
+          send("error", { message: String(e), ses });
+        }
 
-      const now = Date.now();
-      for (let i = 0; i < stats.length; i++) {
-        const { path, size, mtime } = stats[i];
-        const agent = agentIdOf(path);
-        const fresh = i < BACKLOG_AGENTS && now - mtime < RECENT_MS;
-        if (fresh) {
+        // subagents: replay only the freshest, the rest start at EOF
+        const subs = await listSubFiles(sesSubDir);
+        const stats: { path: string; size: number; mtime: number }[] = [];
+        for (const p of subs) {
           try {
-            const { text, size } = await readTail(path, BACKLOG_AGENT_BYTES);
-            for (const l of splitTailLines(text, size > BACKLOG_AGENT_BYTES)) backlog.push(...normalize(l, agent));
+            const st = await stat(p);
+            stats.push({ path: p, size: st.size, mtime: st.mtimeMs });
           } catch {}
         }
-        tracked.set(path, { offset: size, rest: "", agent });
+        stats.sort((a, b) => b.mtime - a.mtime);
+
+        const now = Date.now();
+        for (let i = 0; i < stats.length; i++) {
+          const { path, size, mtime } = stats[i];
+          const agent = agentIdOf(path);
+          const fresh = i < BACKLOG_AGENTS && now - mtime < RECENT_MS;
+          if (fresh) {
+            try {
+              const { text, size: sz } = await readTail(path, BACKLOG_AGENT_BYTES);
+              for (const l of splitTailLines(text, sz > BACKLOG_AGENT_BYTES)) mine.push(...normalize(l, agent));
+            } catch {}
+          }
+          tracked.set(path, { offset: size, rest: "", agent, ses });
+        }
+
+        mine.sort((a, b) => a.t - b.t);
+        for (const e of mine.slice(-BACKLOG_CAP)) backlog.push({ ...e, ses });
+        opened.push({ path: ses, agents: subs.length, size: parentSize });
       }
 
       backlog.sort((a, b) => a.t - b.t);
       // the prelude goes in front of the window, not into it: its events are
       // older than everything here and would be cut by the slice
-      send("backlog", pre.concat(backlog.slice(-BACKLOG_CAP)));
-      send("ready", { path: parentPath, agents: subs.length, size: parentSize });
+      send("backlog", pre.concat(backlog));
+      send("ready", {
+        path: parentPath,                      // unchanged for single-session
+        sessions: opened,
+        agents: opened[0] ? opened[0].agents : 0,
+        size: opened[0] ? opened[0].size : 0,
+      });
 
       // --- live tail ---
       let busy = false;
@@ -124,7 +158,9 @@ export function streamSession(parentPath: string): Response {
               st.offset = size;
               const lines = (st.rest + chunk).split("\n");
               st.rest = lines.pop() ?? "";   // partial line: wait for the rest
-              for (const l of lines) out.push(...normalize(l, st.agent));
+              for (const l of lines) {
+                for (const e of normalize(l, st.agent)) out.push({ ...e, ses: st.ses });
+              }
             }
           } catch {}
         }
@@ -140,18 +176,24 @@ export function streamSession(parentPath: string): Response {
       const rescan = async () => {
         if (scanning || closed) return;
         scanning = true;
-        try {
-          for (const p of await listSubFiles(subDir)) {
-            if (!tracked.has(p)) {
-              tracked.set(p, { offset: 0, rest: "", agent: agentIdOf(p) });
+        for (const ses of sessions) {
+          try {
+            for (const p of await listSubFiles(subDirOf(ses))) {
+              if (!tracked.has(p)) {
+                tracked.set(p, { offset: 0, rest: "", agent: agentIdOf(p), ses });
+              }
             }
-          }
-        } catch {}
+          } catch {}
+        }
         scanning = false;
       };
 
-      try { watchers.push(watch(parentPath, { persistent: false }, () => void pump())); } catch {}
-      try { watchers.push(watch(subDir, { persistent: false }, () => { void rescan(); void pump(); })); } catch {}
+      for (const ses of sessions) {
+        try { watchers.push(watch(ses, { persistent: false }, () => void pump())); } catch {}
+        try {
+          watchers.push(watch(subDirOf(ses), { persistent: false }, () => { void rescan(); void pump(); }));
+        } catch {}
+      }
 
       let tick = 0;
       poll = setInterval(() => {

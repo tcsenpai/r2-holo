@@ -156,6 +156,11 @@
   .agent-tag[data-err="1"]{border-bottom-color:var(--bad);}
   .agent-tag[data-err="1"] .what{color:#ffc9cd;}
   .agent-tag[data-child="1"] .aser{color:var(--good);}
+  /* A session droid is a peer, not a helper: its callout gets the project
+     name at readable size and drops the series chip, which would be noise. */
+  .agent-tag[data-session="1"]{border-bottom-color:var(--steel);}
+  .agent-tag[data-session="1"] .aser{display:none;}
+  .agent-tag[data-session="1"] .aid{color:#cfe6f2;font-size:9.5px;letter-spacing:.12em;}
 
   /* a short leader tick, so a callout is never read as belonging to the
      droid it happens to float in front of */
@@ -347,6 +352,7 @@
     <button class="btn" id="btn-replay" aria-pressed="false">Replay</button>
     <button class="btn" id="btn-rec" aria-pressed="false"><span id="rec-dot"></span><span id="rec-label">Record</span></button>
     <button class="btn" id="btn-reset">Reset view</button>
+    <button class="btn" id="btn-room" aria-pressed="false">Room</button>
     <button class="btn" id="btn-rotate" aria-pressed="false">Rotate</button>
     <button class="btn" id="btn-full" aria-pressed="false">Fullscreen</button>
     <button class="btn" id="btn-info" aria-haspopup="dialog">Info</button>
@@ -395,6 +401,13 @@
       <h3>When it asks you something</h3>
       <p>A droid waiting on an answer stops where it is, turns to face you and holds the question up: a plate carried in front of the dome on a cone of light, a question bar over a short list of choices, a caret walking the options. It is an unstable projection on purpose &mdash; scan lines crawl, the beat flickers and occasionally drops out, the whole plate drifts &mdash; because a steady rectangle reads as a label stuck on the screen rather than something the droid is projecting.</p>
       <p><b>The panel carries no text.</b> The wording of the question never leaves your disk, so what you see is that there <em>is</em> a question and roughly how many ways it can go, not what it says. Only the droid that asked stops; everything else in the bay carries on working, so a stalled unit stands out against the movement rather than freezing the room. Under <span class="code">prefers-reduced-motion</span> the plate holds steady.</p>
+
+      <h3>The room</h3>
+      <p><b>Room</b> brings every currently-working session into the same bay instead of showing one at a time. The session you were watching keeps the full-size droid and the readouts; the others get their own droid on the floor, named after their project. Their subagents fold into them &mdash; showing everyone's helpers at once would crowd the floor past reading. Room and Rotate are alternatives, and turning one on turns the other off.</p>
+      <p>All of it arrives on one connection: browsers allow six per origin, so a stream per session would silently stop opening around the seventh.</p>
+
+      <h3>The pulse ring</h3>
+      <p>The faint ring of ticks at the rim of the floor is the shape of recent work &mdash; brighter where events clustered, red where they failed, newest at the front. Its window is measured from the events themselves rather than fixed to a number of minutes, so a session firing constantly and one ticking over slowly both fill it; what changes is how much time it represents.</p>
 
       <h3>On a wall</h3>
       <p><b>Rotate</b> turns the page into a display for a screen you leave on. It watches only the sessions that have moved in the last minute and moves on every 4 seconds, so an idle machine settles on the one session still working instead of flicking through forty dead ones. The button shows how many are in the rotation, and the name under the title says which one you are looking at.</p>

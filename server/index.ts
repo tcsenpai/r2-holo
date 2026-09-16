@@ -23,8 +23,11 @@ Bun.serve({
     }
 
     if (url.pathname === "/api/stream") {
-      const p = url.searchParams.get("path") ?? "";
-      if (!p || !insideRoot(p)) {
+      // One or many: ?path=a&path=b streams both down one connection, which
+      // is the only way past the browser's six-connection ceiling.
+      const all = url.searchParams.getAll("path").filter(Boolean);
+      const p = all[0] ?? "";
+      if (!p || all.some((x) => !insideRoot(x))) {
         return new Response("path outside ~/.claude/projects", { status: 403 });
       }
       try {
@@ -32,7 +35,7 @@ Bun.serve({
       } catch {
         return new Response("session not found", { status: 404 });
       }
-      return streamSession(resolve(p));
+      return streamSession(all.map((x) => resolve(x)));
     }
 
     // Shared contract served for inspection (source of truth is shared/*.json).

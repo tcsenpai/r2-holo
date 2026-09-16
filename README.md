@@ -2,13 +2,24 @@
 
 A holographic R2-D2 that reacts, live, to what a Claude Code session is doing.
 
+Claude Code writes a transcript of every session to disk. This reads those
+files as they grow and turns them into a room: the droid rolls to a workbench
+when a file is read, its dome lights flare when a tool fails, a smaller droid
+spawns for every subagent and fades out when it finishes, and when Claude asks
+you something the droid stops, turns, and holds the question up on a cone of
+light.
+
+None of it is a metaphor for the work — it *is* the work, one event at a time.
+The point is a display you can leave running and understand at a glance from
+across the room: whether it is working, waiting on you, or stuck.
+
 Needs [Bun](https://bun.sh), built against 1.3.14. Nothing to install: Three.js
 is vendored and there are no dependencies.
 
 ```
 bun run server.ts          # http://127.0.0.1:4242
 PORT=8080 bun run server.ts
-bun test                   # 50 tests
+bun test                   # 63 tests
 ```
 
 ## Screenshots
@@ -107,6 +118,42 @@ what you get is that there is a question, not what it asks.
 Only the asking droid stops. The rest of the bay keeps working, and that
 contrast is the whole point: one unit standing still among moving ones is easy
 to spot.
+
+## The room
+
+**Room** puts every session that is currently working into the same bay at
+once, instead of showing one and cycling. The session you were already
+watching keeps the full-size droid and the readouts; the others each get their
+own droid on the floor, labelled with their project. Subagents of those
+sessions collapse into their parent droid — showing everyone's helpers would
+crowd the floor past reading.
+
+It is one connection, not one per session. Browsers cap HTTP/1.1 at six
+connections per origin, so a stream each would silently stop opening around
+the seventh with nothing in the console to say why. `/api/stream` takes
+repeated `path=` parameters and tags every event with the session it came
+from; a single session behaves exactly as it did before. The server caps a
+request at `MAX_SESSIONS` (8) because each one costs two file watchers.
+
+Room and Rotate are alternatives: rotating exists for when you can only see
+one session, and the room is the reason you no longer have to. Turning either
+on turns the other off.
+
+## The pulse ring
+
+A thin ring of ticks around the rim of the floor, one per slot of recent
+history, brighter where events clustered and red where they failed. It is the
+shape of the last stretch of work, readable without looking away from the
+droid.
+
+Its span is measured rather than chosen, and that took three tries — each
+failure is recorded in the comment above `bucketize()` and in
+`tests/ring.test.ts`, because none of them throw, they just draw an empty
+ring. A fixed 12-hour window came back 3/60 slots full on live sessions. The
+backlog is capped at 220 events, so a busy session spends them in minutes
+while a quiet one spreads them over days. What works is to take the last 120
+events and let them set their own scale: the ring fills either way, and the
+span is what differs.
 
 ## On a wall
 
@@ -220,7 +267,8 @@ shared/systems.json    R2 subsystem definitions
 public/index.html      layout, palette, info modal
 public/holotable.js    procedural model, rig, reactions
 public/three.min.js    r128, served locally (no CDN)
-tests/                 contract, normalisation, escaping, guards, replay, rotate
+tests/                 contract, normalisation, escaping, guards,
+                       replay, rotate, multiplex, ring
 ```
 
 Splitting the wire format across two files invites them to drift apart, so

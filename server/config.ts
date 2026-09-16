@@ -46,6 +46,10 @@ export const RECENT_MS = 15 * 60 * 1000;    // what counts as "recent" for the r
 export const BACKLOG_PARENT_BYTES = 512 * 1024;
 export const BACKLOG_AGENT_BYTES = 192 * 1024;
 export const BACKLOG_CAP = 220;             // events kept after time-sort
+/** Ceiling on one multiplexed stream. Each session costs a parent watcher,
+ *  a subagent-dir watcher and a droid rig on the client, so the room stops
+ *  being readable long before the server stops coping. */
+export const MAX_SESSIONS = 8;
 export const POLL_MS = 1200;                // safety poll (fs.watch sleeps on macOS)
 export const RESCAN_EVERY_TICKS = 4;        // subagent rescan cadence (~5 s)
 export const BEAT_MS = 15_000;              // SSE heartbeat

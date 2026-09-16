@@ -1042,6 +1042,16 @@
               model:null, atype:null, lastTool:"—", tokens:0, tools:0,
               errors:0, firstAt:Date.now(), mode:"idle", secs:0 };
     el.addEventListener("click", function(){ showAgent(id); });
+    // A session droid is a peer, not a helper: name it after its project
+    // and give it room-mate scale so the floor reads as several sessions
+    // rather than one session with oversized subagents.
+    if(id.indexOf(SES_PREFIX) === 0){
+      A.isSession = true;
+      A.targetScale = 0.62;
+      el.dataset.session = "1";
+      var lab = sesLabelFor(id);
+      if(lab) el.querySelector(".aid").textContent = lab;
+    }
     AGENTS[id] = A;
     buildAgentBody(A, seriesFor(model));
     markShared();
@@ -2668,7 +2678,50 @@
     ticker.innerHTML="";
   }
 
-  function connect(path){
+  /* --- the room holds every active session ---------------------------
+     One stream carries them all (browsers cap HTTP/1.1 at six connections,
+     so one per session would silently stop opening around the seventh).
+     The first session drives the full-size droid and the readouts; the
+     others get their own droid on the floor, reusing the subagent rig
+     rather than duplicating MAIN — a session droid IS a droid, only
+     bigger and labelled differently. */
+  var SES_PREFIX = "ses:";
+  var roomOn = false;
+  var primaryPath = null;
+  var sesOf = {};                    // session path -> agent id
+
+  function sesLabelFor(id){
+    for(var path in sesOf){
+      if(sesOf[path] !== id) continue;
+      for(var i=0;i<lastList.length;i++){
+        if(lastList[i].path !== path) continue;
+        var s = lastList[i];
+        return (s.title || shortCwd(s.cwd) || "").slice(0, 26);
+      }
+    }
+    return "";
+  }
+  function sesAgentId(path){
+    // short and stable: the session uuid's head, like agentIdOf server-side
+    var base = String(path).split("/").pop().replace(/\.jsonl$/, "");
+    return SES_PREFIX + base.slice(0, 6);
+  }
+  /* Route an event to its droid. Events from the primary session keep the
+     old path exactly; events from another session are re-tagged as that
+     session's droid so the existing agent machinery animates them. */
+  function routed(ev){
+    if(!ev.ses || ev.ses === primaryPath) return ev;
+    var id = sesOf[ev.ses];
+    if(!id) return null;             // a session we are not showing
+    var copy = {};
+    for(var k in ev) copy[k] = ev[k];
+    // a subagent of another session collapses into that session's droid:
+    // showing someone else's subagents would crowd the floor past reading
+    copy.agent = id;
+    return copy;
+  }
+
+  function connect(path, extra){
     if(es){ es.close(); es=null; }
     clearTimeout(retry);
     resetAll();
@@ -2676,8 +2729,17 @@
     mainPend = {};
     setLink("0","connecting…");
 
+    primaryPath = path;
+    sesOf = {};
+    var qs = "path=" + encodeURIComponent(path);
+    (extra || []).forEach(function(p2){
+      if(p2 === path) return;
+      sesOf[p2] = sesAgentId(p2);
+      qs += "&path=" + encodeURIComponent(p2);
+    });
+
     setWatching(path);
-    es=new EventSource("/api/stream?path="+encodeURIComponent(path));
+    es=new EventSource("/api/stream?" + qs);
     es.addEventListener("backlog", function(e){
       var evs=JSON.parse(e.data);
       // only spawn droids for subagents that were still working at the end
@@ -2690,7 +2752,7 @@
       Object.keys(lastByAgent).forEach(function(id){
         if(newest - lastByAgent[id] < AGENT_TTL) aliveFilter.add(id);
       });
-      evs.forEach(function(ev){ handle(ev, true); });
+      evs.forEach(function(ev){ var r = routed(ev); if(r) handle(r, true); });
       aliveFilter=null;
       evs.slice(-9).forEach(function(ev){ pushTick(ev, true); });
       MODKEYS.forEach(function(k){ MOD[k].p=0; });
@@ -2702,7 +2764,11 @@
     es.addEventListener("ready", function(){ setLink("1","listening"); SOUND.blip(true); });
     es.addEventListener("events", function(e){
       // queued, not fired: the loop paces them out
-      QUEUE.push.apply(QUEUE, JSON.parse(e.data));
+      var incoming = JSON.parse(e.data);
+      for(var qi=0; qi<incoming.length; qi++){
+        var r = routed(incoming[qi]);
+        if(r) QUEUE.push(r);
+      }
     });
     es.addEventListener("beat", function(){});
     es.onerror=function(){
@@ -2909,6 +2975,39 @@
     btnRec.title = "This browser cannot record the canvas";
   }
 
+  /* --- room control --------------------------------------------------
+     Room and Rotate are alternatives, not companions: rotating through
+     sessions one at a time is what you do when you can only see one, and
+     the room exists precisely so you no longer have to. */
+  var btnRoom = document.getElementById("btn-room");
+  function syncRoomUI(){
+    if(!btnRoom) return;
+    btnRoom.setAttribute("aria-pressed", roomOn ? "true" : "false");
+    var n = Object.keys(sesOf).length;
+    btnRoom.textContent = (roomOn && n) ? "Room " + (n + 1) : "Room";
+  }
+  function openRoom(){
+    var act = activeFrom(lastList);
+    if(!act.length) return;
+    var here = sel.value;
+    // whatever is on screen stays the full-size droid; the rest join it
+    var others = act.filter(function(s){ return s.path !== here; })
+                    .slice(0, 7)          // server caps at MAX_SESSIONS
+                    .map(function(s){ return s.path; });
+    connect(here, others);
+    syncRoomUI();
+  }
+  btnRoom.addEventListener("click", function(){
+    roomOn = !roomOn;
+    if(roomOn){
+      if(rotate.on){ rotate.on = false; syncRotateUI(); }   // mutually exclusive
+      openRoom();
+    } else {
+      connect(sel.value);                                    // back to one
+    }
+    syncRoomUI();
+  });
+
   /* --- rotate control ------------------------------------------------ */
   var btnRotate = document.getElementById("btn-rotate");
   function syncRotateUI(){
@@ -2920,6 +3019,7 @@
   }
   btnRotate.addEventListener("click", function(){
     rotate.on = !rotate.on;
+    if(rotate.on && roomOn){ roomOn = false; syncRoomUI(); connect(sel.value); }
     rotate.until = 0;                  // switch on the next poll, not in 25 s
     syncRotateUI();
     if(rotate.on){ refreshSessions(); rotateStep(lastList); }
@@ -3588,6 +3688,97 @@
     syncReplayUI();
   }
 
+  /* The pulse ring: one faint tick per time slot, laid flat at the very
+     edge of the floor. Deliberately quiet — it lives outside the bay
+     markings and under everything else, so it reads as a rim on the
+     table rather than another thing competing for the eye. */
+  var RING_SLOTS = 72, RING_R = 17.4;
+  var PULSE = (function(){
+    var g = new THREE.Group();
+    var ticks = [];
+    for(var i=0;i<RING_SLOTS;i++){
+      var a = (i/RING_SLOTS) * Math.PI*2 - Math.PI/2;   // newest at the front
+      var m = lineMaterial(PROJ, 0);
+      var seg = new THREE.LineSegments(
+        new THREE.BufferGeometry().setAttribute("position",
+          new THREE.Float32BufferAttribute([
+            Math.cos(a)*RING_R, 0, Math.sin(a)*RING_R,
+            Math.cos(a)*(RING_R+0.55), 0, Math.sin(a)*(RING_R+0.55)
+          ], 3)), m);
+      g.add(seg);
+      ticks.push({ obj:seg, mat:m });
+    }
+    g.visible = false;
+    scene.add(g);
+    return { group:g, ticks:ticks, acc:0 };
+  })();
+
+  var pulseOn = true;
+  function updatePulse(dt){
+    PULSE.group.visible = pulseOn && !!HIST.length;
+    if(!PULSE.group.visible) return;
+    PULSE.acc += dt;
+    if(PULSE.acc < 0.5) return;            // twice a second is plenty
+    PULSE.acc = 0;
+    var b = bucketize(HIST, Date.now(), RING_SLOTS, 120);
+    var peak = 1;
+    for(var i=0;i<b.length;i++) if(b[i].n > peak) peak = b[i].n;
+    for(var k=0;k<RING_SLOTS;k++){
+      var slot = b[k], T = PULSE.ticks[k];
+      if(!slot.n){ T.mat.opacity = 0.03; T.mat.color.set(PROJ); continue; }
+      // errors keep their own colour; density only sets how present a
+      // tick is, so a busy stretch reads as a solid arc from across a room
+      T.mat.opacity = 0.10 + 0.32 * Math.min(1, slot.n / peak);
+      T.mat.color.set(slot.err ? BAD : PROJ);   // BAD is a hex int, PROJ a Color
+    }
+  }
+
+  /* Bucket the most recent run of events into a ring.
+
+     The span is measured, never chosen. Three attempts on real sessions,
+     kept here because each failed for a reason worth not repeating:
+       - fixed 12-hour window: 3/60 slots full. The backlog is capped at
+         220 events, so a busy session spends them in minutes.
+       - anchor at the oldest event: 522-hour spans. The prelude injects a
+         few very old events and one outlier flattens the scale.
+       - cut at the largest gap: real gaps scored 0.85 to 84 against what
+         followed, so no single threshold separated a coffee break from a
+         session picked up eight days later.
+     What works is the simplest thing: take the last N events and let them
+     set their own span. Ordering is free — they arrive sorted — and N
+     events of a busy session cover minutes while N of a slow one cover
+     days. Both fill the ring; the span label is what tells them apart.
+     Pure and geometry-free, so the shape can be checked on the numbers. */
+  function bucketize(hist, nowMs, slots, take){
+    var out = [];
+    for(var i=0;i<slots;i++) out.push({ n:0, err:0 });
+    out.spanMs = 0; out.from = nowMs; out.n = 0;
+
+    var recent = hist.slice(-(take || 120));
+    var ts = [];
+    for(var f=0; f<recent.length; f++){
+      var tv = recent[f].t || 0;
+      if(tv > 0 && tv <= nowMs) ts.push(tv);
+    }
+    if(!ts.length) return out;
+    ts.sort(function(a,b){ return a-b; });
+
+    var from = ts[0];
+    var span = Math.max(1000, nowMs - from);
+    for(var j=0;j<recent.length;j++){
+      var t = recent[j].t || 0;
+      if(!t || t > nowMs || t < from) continue;
+      var k = Math.floor(((t - from) / span) * slots);
+      if(k < 0) k = 0; else if(k >= slots) k = slots - 1;
+      out[k].n++;
+      if(recent[j].error) out[k].err++;
+    }
+    out.spanMs = span;
+    out.from = from;
+    out.n = ts.length;
+    return out;
+  }
+
   /* Rebuild the world as it stood at time T. resetAll() clears the droids
      and counters, then every event up to T is re-applied silently (no
      sound, no wake-up snaps — this is a reconstruction, not live news). */
@@ -3639,6 +3830,7 @@
 
     drainQueue(dt);
     stepReplay(dt);
+    updatePulse(dt);
 
     var decay = Math.exp(-1.9*dt);
     MODKEYS.forEach(function(k){ MOD[k].p *= decay; });

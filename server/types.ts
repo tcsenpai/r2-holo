@@ -35,6 +35,7 @@ export type Ev = {
   ms?: number;         // durationMs, on the system lines that carry one
   path?: string;       // trackingPath, home-relative
   op?: string;         // queue-operation: enqueue / dequeue / remove / popAll
+  ses?: string;        // session this came from, set when multiplexing
   cost?: CostDigest;
 };
 
