@@ -20,6 +20,11 @@ bun test                   # 44 tests
 <img width="1641" height="837" alt="CleanShot 2026-09-15 at 15 53 38" src="https://github.com/user-attachments/assets/c3db44ce-52d3-4905-aedc-f383dfdb7219" />
 
 
+The dropdown lists the 40 most recently active sessions from `~/.claude/projects`,
+with the title and cwd read out of each transcript rather than decoded from the
+folder name (which is ambiguous for paths like `poppix-lineareact`). The list
+refreshes every 30 seconds, so a session that wakes up climbs back to the top.
+
 ## What it reads
 
 The server tails the selected `.jsonl` (`fs.watch` plus a 1.2 s safety poll,
