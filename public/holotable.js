@@ -2482,6 +2482,9 @@
     if(ev.effort) live.effort = ev.effort;
     if(ev.speed) live.speed = ev.speed;
     if(ev.sidechain) live.sidechains++;
+    // the transcript's own title beats the session list, which is only
+    // refreshed every 30 s
+    if(ev.kind==="title" && ev.label) setWatchingName(ev.label);
     if(ev.kind==="tool") live.lastTool = ev.tool;
     if(ev.kind==="result" && ev.error) live.errors++;
 
@@ -2594,6 +2597,25 @@
     if(!p) return null;
     return p.replace(/^\/Users\/[^/]+/, "~").replace(/^\/home\/[^/]+/, "~");
   }
+  /* The headline for whatever is on screen. Reads from the session list
+     rather than the picker's label, which carries a relative time that
+     would go stale on a wall display. */
+  var watchEl = document.getElementById("watching");
+  function setWatchingName(name){
+    if(!watchEl || !name) return;
+    watchEl.querySelector(".wname").textContent = name;
+  }
+  function setWatching(path){
+    if(!watchEl) return;
+    var s = null;
+    for(var i=0;i<lastList.length;i++) if(lastList[i].path === path){ s = lastList[i]; break; }
+    var name = s ? (s.title || shortCwd(s.cwd) || s.id && s.id.slice(0,8) || "session") : "";
+    var where = s ? (shortCwd(s.cwd) || "") : "";
+    watchEl.querySelector(".wname").textContent = name;
+    // no point repeating the path when it is already the name
+    watchEl.querySelector(".wwhere").textContent = (where && where !== name) ? where : "";
+  }
+
   function labelFor(s){
     var name = s.title || shortCwd(s.cwd) || s.id.slice(0,8);
     var where = shortCwd(s.cwd) || "";
@@ -2622,6 +2644,7 @@
         setLink("err","nothing to watch");
         return;
       }
+      lastList = list;          // so Rotate has candidates from the first tick
       fillSelect(list);
       connect(list[0].path);
     }).catch(function(){ setLink("err","server unreachable"); });
@@ -2653,6 +2676,7 @@
     mainPend = {};
     setLink("0","connecting…");
 
+    setWatching(path);
     es=new EventSource("/api/stream?path="+encodeURIComponent(path));
     es.addEventListener("backlog", function(e){
       var evs=JSON.parse(e.data);
@@ -2698,8 +2722,9 @@
      that has been idle all afternoon shows the one session still going
      rather than flicking through forty dead ones. */
   var ACTIVE_WINDOW = 60 * 1000;      // "doing something" means: moved within a minute
-  var DWELL = 25 * 1000;              // how long to watch each one
+  var DWELL = 4000;                   // how long to watch each one
   var rotate = { on:false, until:0, list:[] };
+  var lastList = [];                  // newest session list, fed by the fetch
 
   /* Sessions that moved inside the window, newest activity first. Split
      out with an explicit clock because the window is what decides whether
@@ -2711,13 +2736,17 @@
   function activeFrom(list){
     return activeIn(list, Date.now(), ACTIVE_WINDOW);
   }
-  /* Never cut away mid-sentence: a droid that is talking or holding a
-     question is the most watchable moment there is, and switching then
-     makes the wall look broken rather than busy. */
+  /* Only hold the switch for things that genuinely need the screen. An
+     open question is waiting on a human, and replay or recording are you
+     using the page for something else.
+
+     Talking deliberately does NOT hold it: a busy session emits prose
+     blocks continuously, each arming talkUntil for TALK_MS, so waiting on
+     that meant the rotation almost never fired — the exact symptom of a
+     wall that looks stuck. */
   function safeToSwitch(){
     if(replay.on || rec.on) return false;
     if(isAsk(mainPend)) return false;
-    if(Date.now() < talkUntil) return false;
     return true;
   }
   function rotateStep(list){
@@ -2727,8 +2756,8 @@
     syncRotateUI();
     if(act.length < 2) return;             // nothing to rotate between
     if(Date.now() < rotate.until) return;
-    if(!safeToSwitch()){                   // try again shortly
-      rotate.until = Date.now() + 4000;
+    if(!safeToSwitch()){                   // check again on the next tick
+      rotate.until = Date.now() + 1500;
       return;
     }
     var here = act.findIndex(function(s){ return s.path === sel.value; });
@@ -2745,14 +2774,17 @@
     var keep=sel.value;
     fetch("/api/sessions?limit=40").then(function(r){return r.json();}).then(function(list){
       if(!list.length || !sel.options.length) return;
+      lastList = list;
       if(list[0].path !== sel.options[0].value) fillSelect(list, keep);
-      rotateStep(list);
     }).catch(function(){});
   }
-  // 30 s is right for keeping the picker fresh; rotation needs to react
-  // sooner than that, so it polls faster once it is on.
-  setInterval(function(){ if(!rotate.on) refreshSessions(); }, 30000);
-  setInterval(function(){ if(rotate.on) refreshSessions(); }, 5000);
+  // Two clocks on purpose. The fetch keeps the candidate list fresh; the
+  // rotation runs off the last list it was given, so its cadence is its
+  // own rather than whatever the network happened to do. Tying the two
+  // together capped switching at the poll interval.
+  setInterval(refreshSessions, 30000);
+  setInterval(function(){ if(rotate.on) refreshSessions(); }, 10000);
+  setInterval(function(){ if(rotate.on) rotateStep(lastList); }, 1000);
 
   /* ===================================================================
      11. CONSOLE
@@ -2890,7 +2922,7 @@
     rotate.on = !rotate.on;
     rotate.until = 0;                  // switch on the next poll, not in 25 s
     syncRotateUI();
-    if(rotate.on) refreshSessions();
+    if(rotate.on){ refreshSessions(); rotateStep(lastList); }
   });
 
   /* --- fullscreen ---------------------------------------------------

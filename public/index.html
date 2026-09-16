@@ -72,6 +72,18 @@
     font-size:clamp(22px,3.2vw,32px);letter-spacing:.02em;line-height:1;
     color:#eaf7ff;text-shadow:0 0 18px rgba(95,227,255,.45);
   }
+  /* What is being watched, big enough to read across a room. Display
+     face like the h1 but lighter and dimmer, so it sits under the title
+     instead of competing with it. */
+  #watching{
+    font-family:var(--f-disp);font-size:clamp(13px,1.5vw,18px);
+    letter-spacing:.01em;line-height:1.25;margin:-2px 0 9px;
+    max-width:min(92vw,560px);
+  }
+  #watching .wname{color:#bfe4f5;}
+  #watching .wwhere{color:var(--proj-dim);}
+  #watching .wwhere:not(:empty)::before{content:"  \00b7  ";color:var(--line);}
+  #watching:empty{display:none;}
   #title .bar{width:52px;height:2px;margin-bottom:10px;background:linear-gradient(90deg,var(--proj),rgba(95,227,255,0));}
   #picker{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px;}
   select{
@@ -304,6 +316,7 @@
     <div class="eyebrow">Industrial Automaton &middot; Diagnostic holotable</div>
     <h1>R2-D2</h1>
     <div class="bar"></div>
+    <div id="watching" aria-live="polite"><span class="wname"></span><span class="wwhere"></span></div>
     <div id="picker">
       <select id="sessions" aria-label="Claude Code session"><option>loading&hellip;</option></select>
       <span id="link" data-on="0"><span id="dot"></span><span id="linktext">disconnected</span></span>
@@ -384,8 +397,8 @@
       <p><b>The panel carries no text.</b> The wording of the question never leaves your disk, so what you see is that there <em>is</em> a question and roughly how many ways it can go, not what it says. Only the droid that asked stops; everything else in the bay carries on working, so a stalled unit stands out against the movement rather than freezing the room. Under <span class="code">prefers-reduced-motion</span> the plate holds steady.</p>
 
       <h3>On a wall</h3>
-      <p><b>Rotate</b> turns the page into a display for a screen you leave on. It watches only the sessions that have moved in the last minute and cycles them every 25 seconds, so an idle machine settles on the one session still working instead of flicking through forty dead ones. The button shows how many are in the rotation.</p>
-      <p>It will not cut away mid-sentence: while the droid is talking, or holding a question up, the switch waits. Replay and recording hold it off too. Pair it with <b>F</b> for fullscreen and <span class="code">bun run lan</span> if the screen is a different machine.</p>
+      <p><b>Rotate</b> turns the page into a display for a screen you leave on. It watches only the sessions that have moved in the last minute and moves on every 4 seconds, so an idle machine settles on the one session still working instead of flicking through forty dead ones. The button shows how many are in the rotation, and the name under the title says which one you are looking at.</p>
+      <p>An open question holds the switch, and so does replay or recording &mdash; but talking does not: a busy session talks almost continuously, and waiting on that left the rotation barely moving. Pair it with <b>F</b> for fullscreen and <span class="code">bun run lan</span> if the screen is a different machine.</p>
 
       <h3>Replay and recording</h3>
       <p><b>Replay</b> opens a transport over everything the page has received since you connected &mdash; the backlog the server replays on connect, plus whatever has arrived since. Drag the scrubber to land anywhere in that span, or let it play at 1&times; to 8&times;. Events that keep arriving while you are in the past are still recorded, so <b>Live</b> always returns to a current world rather than a stale one.</p>

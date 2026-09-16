@@ -111,14 +111,21 @@ to spot.
 ## On a wall
 
 **Rotate** cycles the sessions that are actually doing something: anything whose
-newest activity — parent or subagent — is under a minute old. Every 25 seconds it
-moves to the next one, and the button shows how many are in the rotation. An
-idle machine settles on the one session still working rather than flicking
-through forty dead ones.
+newest activity — parent or subagent — is under a minute old. It moves on every
+4 seconds and the button shows how many are in the rotation, so an idle machine
+settles on the one session still working rather than flicking through forty dead
+ones. The session being watched is named under the title, large enough to read
+from across a room.
 
-It waits rather than cutting away mid-sentence: while the droid is talking or
-holding a question up, and while you are in replay or recording, the switch is
-deferred. `tests/rotate.test.ts` pins the window, including the case where a
+Two clocks, deliberately: the fetch keeps the candidate list fresh every 10 s
+while rotating, and the rotation itself ticks every second off the last list it
+was handed. Tying them together capped switching at the poll interval, which is
+what made an early version look stuck.
+
+The only things that hold a switch are an open question and your own use of the
+page — replay or recording. Talking does not: a busy session emits prose
+continuously, and waiting on that meant the rotation almost never fired.
+`tests/rotate.test.ts` pins the activity window, including the case where a
 missing timestamp must read as quiet rather than as now.
 
 With **F** for fullscreen and `bun run lan` for a screen on another machine,
