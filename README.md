@@ -22,13 +22,13 @@ PORT=8080 bun run server.ts
 bun test                   # 63 tests
 ```
 
-## Screenshots
+## Watch it run
 
-<img width="1641" height="837" alt="CleanShot 2026-09-15 at 15 54 05" src="https://github.com/user-attachments/assets/d214c2d4-041c-45d1-ad9b-a27f06c9e7a2" />
+<!-- Drop the mp4 into the GitHub editor here and paste the link it returns,
+     replacing this comment and the line below. GitHub plays mp4 and mov
+     inline; it will not play a webm. -->
 
-<img width="1641" height="837" alt="CleanShot 2026-09-15 at 15 58 32" src="https://github.com/user-attachments/assets/161c56b8-7ab9-4e37-be81-370d6eb71853" />
-
-<img width="1641" height="837" alt="CleanShot 2026-09-15 at 15 53 38" src="https://github.com/user-attachments/assets/c3db44ce-52d3-4905-aedc-f383dfdb7219" />
+_(demo video goes here)_
 
 ## What it reads
 
@@ -285,6 +285,14 @@ Google Fonts, and the system fallback stack holds up fine without it.
 - **Blank stage, no droid** — no WebGL. Check `chrome://gpu`, or whether
   hardware acceleration is switched off.
 - **Nothing on another device** — it only listens on localhost, see above.
+
+## Appendix: stills
+
+<img width="1641" height="837" alt="The bay, with the primary droid at a workshop station" src="https://github.com/user-attachments/assets/d214c2d4-041c-45d1-ad9b-a27f06c9e7a2" />
+
+<img width="1641" height="837" alt="Subagent droids on the floor" src="https://github.com/user-attachments/assets/161c56b8-7ab9-4e37-be81-370d6eb71853" />
+
+<img width="1641" height="837" alt="The workshop floor and the column" src="https://github.com/user-attachments/assets/c3db44ce-52d3-4905-aedc-f383dfdb7219" />
 
 ## Licence
 
