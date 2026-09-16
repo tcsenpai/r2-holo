@@ -24,11 +24,10 @@ bun test                   # 63 tests
 
 ## Watch it run
 
-
-
 https://github.com/user-attachments/assets/e0df7448-a8a4-49da-b3ca-47c7202372d8
 
-
+A live session: the droid working a station, subagents spawning and fading,
+the ring at the rim tracking the pace of it.
 
 ## What it reads
 
