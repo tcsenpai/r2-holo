@@ -184,8 +184,13 @@
   var PEND_MAX = 300000;      // give up on an unmatched call after 5 min
   var WAIT_WINDOW = 90000;    // after this, the session is genuinely idle
 
+  /* `at` is the event's own time, not the wall clock. During replay the
+     wall clock is hours away from when the call actually ran, so stamping
+     Date.now() made every derived duration collapse to ~0 — a 45s Bash
+     call read as 0.0s. Date.now() stays as the fallback for an event with
+     no timestamp, where the wall clock is the best guess available. */
   function pendStart(pend, ev){
-    pend[ev.id || ("k"+(pendSeq++))] = { tool: ev.tool, at: Date.now() };
+    pend[ev.id || ("k"+(pendSeq++))] = { tool: ev.tool, at: ev.t || Date.now() };
   }
   function pendEnd(pend, ev){
     if(ev.forId && pend[ev.forId]){ delete pend[ev.forId]; return; }
@@ -214,8 +219,28 @@
     });
   }
 
+  /* How urgently a station pulses, from how long its call has been open.
+     Measured on 104 real calls: median 3.3s, longest 97s, only 5 over
+     30s — so a linear mapping would leave 95% of events identical. Log
+     scale with a floor: nothing below WAIT_FLOOR reads as waiting at all,
+     and past WAIT_SLOW the pulse has bottomed out rather than crawling to
+     a stop. Returns a frequency multiplier, 1 = the normal beat. */
+  var WAIT_FLOOR = 4000, WAIT_SLOW = 120000;
+  function waitPulse(ms){
+    if(!(ms > WAIT_FLOOR)) return 1;
+    var span = Math.log(WAIT_SLOW / WAIT_FLOOR);
+    var k = Math.min(1, Math.log(ms / WAIT_FLOOR) / span);
+    return 1 - k * 0.72;          // slows to ~28% of the normal beat
+  }
+
+  /* Scene time, not wall time. In replay the scene sits hours in the past,
+     so comparing against Date.now() would age every open call past
+     PEND_MAX instantly and nothing would ever show as in flight. */
+  function sceneNow(){
+    return (typeof replay !== "undefined" && replay.on) ? replay.at : Date.now();
+  }
   function applyPending(pend, m){
-    var now=Date.now(), oldest=null;
+    var now=sceneNow(), oldest=null;
     Object.keys(pend).forEach(function(k){
       var P=pend[k];
       if(now - P.at > PEND_MAX){ delete pend[k]; return; }
@@ -3557,7 +3582,7 @@
       if(P.level < 0.012){ P.group.visible = false; continue; }
       P.group.visible = true;
       P.setLevel(P.level);
-      P.update(dt, tt, flight ? (Date.now()-flight.at)/1000 : 0);
+      P.update(dt, tt, flight ? (sceneNow()-flight.at)/1000 : 0);
       var isAskProp = (keys[i] === "ask");
       if(mount && !isAskProp){
         P.group.position.copy(mount);                    // mounted on a fixture
@@ -4019,7 +4044,7 @@
       ? { head:"RECHARGING", label:"context compaction",
           secs:Math.round((chargeUntil-nowMs)/1000), mode:"charge" }
       : inflight
-      ? { head:"RUNNING", label:inflight.tool, secs:Math.round((nowMs-inflight.at)/1000), mode:"run" }
+      ? { head:"RUNNING", label:inflight.tool, secs:Math.round((sceneNow()-inflight.at)/1000), mode:"run" }
       : talking
       ? { head:"TALKING", label:"replying to you", secs:Math.round((talkUntil-nowMs)/1000), mode:"run" }
       : waiting
@@ -4102,7 +4127,12 @@
         // invisible, and it keeps the bench from going dark under a subagent.
         var inUse = (station === St) || (prevClaimed[St.kind] !== undefined);
         St.lit = damp(St.lit, inUse ? 1 : 0, 5, dt);
-        St.mat.opacity = St.lit * (0.28 + 0.22*(0.5+0.5*Math.sin(t*2.4)));
+        // the bench beats slower the longer its call has been open, so a
+        // stuck operation is visible as a change of rhythm from across the
+        // room rather than as a number nobody reads from four metres
+        var beat = 2.4 * ((station === St && inflight)
+          ? waitPulse(sceneNow() - inflight.at) : 1);
+        St.mat.opacity = St.lit * (0.28 + 0.22*(0.5+0.5*Math.sin(t*beat)));
         St.ring.visible = St.lit > 0.02;
       });
     }
@@ -4211,7 +4241,7 @@
                        wait: aWait && !aAsk, idle: aIdle && !aAsk }, dt);
       updateProps(A, aFlight, dt, t, A.wrap.position, A.targetScale/0.52);
       var aMode = aFlight ? "run" : (aAsk ? "ask" : (aWait ? "wait" : "idle"));
-      var aSecs = aFlight ? Math.round((nowMs - aFlight.at)/1000)
+      var aSecs = aFlight ? Math.round((sceneNow() - aFlight.at)/1000)
                           : Math.round(aSince/1000);
       var aKey = aMode + "|" + (aFlight ? aFlight.tool : "") + "|" + aSecs;
       A.mode = aMode; A.secs = aSecs;

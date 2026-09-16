@@ -19,7 +19,7 @@ is vendored and there are no dependencies.
 ```
 bun run server.ts          # http://127.0.0.1:4242
 PORT=8080 bun run server.ts
-bun test                   # 76 tests
+bun test                   # 91 tests
 ```
 
 ## Watch it run
@@ -201,6 +201,23 @@ destinations pinned the display on a dead session with a live one available.
 
 With **F** for fullscreen and `bun run lan` for a screen on another machine,
 that is the whole wall-display setup.
+
+## How long it has been waiting
+
+A bench beats slower the longer its call has been open, so an operation
+that is stuck reads as a change of rhythm from across the room rather than
+as a number nobody can see from four metres.
+
+The mapping is log, not linear, and the reason is measured: 104 real tool
+calls had a median of 3.3s and a longest of 97s, with only 5 over 30s. A
+linear scale would have left 95% of events looking identical. Below the
+median nothing changes at all; past two minutes the beat has bottomed out
+at about a third of normal rather than crawling to a stop, because a bench
+that stops pulsing reads as broken rather than busy.
+
+The duration is derived client-side from the gap between a `tool` event
+and its `result` — there is no per-call duration anywhere in the
+transcript, only a per-turn one, which the floor rings already draw.
 
 ## Replay and recording
 
