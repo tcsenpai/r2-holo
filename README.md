@@ -8,7 +8,7 @@ is vendored and there are no dependencies.
 ```
 bun run server.ts          # http://127.0.0.1:4242
 PORT=8080 bun run server.ts
-bun test                   # 44 tests
+bun test                   # 50 tests
 ```
 
 ## Screenshots
@@ -108,6 +108,22 @@ Only the asking droid stops. The rest of the bay keeps working, and that
 contrast is the whole point: one unit standing still among moving ones is easy
 to spot.
 
+## On a wall
+
+**Rotate** cycles the sessions that are actually doing something: anything whose
+newest activity — parent or subagent — is under a minute old. Every 25 seconds it
+moves to the next one, and the button shows how many are in the rotation. An
+idle machine settles on the one session still working rather than flicking
+through forty dead ones.
+
+It waits rather than cutting away mid-sentence: while the droid is talking or
+holding a question up, and while you are in replay or recording, the switch is
+deferred. `tests/rotate.test.ts` pins the window, including the case where a
+missing timestamp must read as quiet rather than as now.
+
+With **F** for fullscreen and `bun run lan` for a screen on another machine,
+that is the whole wall-display setup.
+
 ## Replay and recording
 
 **Replay** puts a transport over everything the page has received since it
@@ -197,7 +213,7 @@ shared/systems.json    R2 subsystem definitions
 public/index.html      layout, palette, info modal
 public/holotable.js    procedural model, rig, reactions
 public/three.min.js    r128, served locally (no CDN)
-tests/                 contract, normalisation, escaping, guards, replay
+tests/                 contract, normalisation, escaping, guards, replay, rotate
 ```
 
 Splitting the wire format across two files invites them to drift apart, so

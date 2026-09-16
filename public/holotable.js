@@ -2692,14 +2692,67 @@
   sel.addEventListener("change", function(){ connect(sel.value); });
   loadSessions();
 
-  setInterval(function(){
-    if(document.activeElement===sel) return;
+  /* --- rotate: a wall display cycling the sessions that are awake ------
+     Built for a screen left on in the corner of a room. Only sessions
+     that moved inside ACTIVE_WINDOW are in the rotation, so a machine
+     that has been idle all afternoon shows the one session still going
+     rather than flicking through forty dead ones. */
+  var ACTIVE_WINDOW = 60 * 1000;      // "doing something" means: moved within a minute
+  var DWELL = 25 * 1000;              // how long to watch each one
+  var rotate = { on:false, until:0, list:[] };
+
+  /* Sessions that moved inside the window, newest activity first. Split
+     out with an explicit clock because the window is what decides whether
+     the wall shows live work or flicks through dead sessions, and getting
+     it wrong looks like a stuck picture rather than an error. */
+  function activeIn(list, nowMs, windowMs){
+    return list.filter(function(s){ return nowMs - (s.mtime || 0) < windowMs; });
+  }
+  function activeFrom(list){
+    return activeIn(list, Date.now(), ACTIVE_WINDOW);
+  }
+  /* Never cut away mid-sentence: a droid that is talking or holding a
+     question is the most watchable moment there is, and switching then
+     makes the wall look broken rather than busy. */
+  function safeToSwitch(){
+    if(replay.on || rec.on) return false;
+    if(isAsk(mainPend)) return false;
+    if(Date.now() < talkUntil) return false;
+    return true;
+  }
+  function rotateStep(list){
+    if(!rotate.on) return;
+    var act = activeFrom(list);
+    rotate.list = act;
+    syncRotateUI();
+    if(act.length < 2) return;             // nothing to rotate between
+    if(Date.now() < rotate.until) return;
+    if(!safeToSwitch()){                   // try again shortly
+      rotate.until = Date.now() + 4000;
+      return;
+    }
+    var here = act.findIndex(function(s){ return s.path === sel.value; });
+    var next = act[(here + 1) % act.length];
+    if(next && next.path !== sel.value){
+      sel.value = next.path;
+      connect(next.path);
+    }
+    rotate.until = Date.now() + DWELL;
+  }
+
+  function refreshSessions(){
+    if(document.activeElement===sel && !rotate.on) return;
     var keep=sel.value;
     fetch("/api/sessions?limit=40").then(function(r){return r.json();}).then(function(list){
       if(!list.length || !sel.options.length) return;
       if(list[0].path !== sel.options[0].value) fillSelect(list, keep);
+      rotateStep(list);
     }).catch(function(){});
-  }, 30000);
+  }
+  // 30 s is right for keeping the picker fresh; rotation needs to react
+  // sooner than that, so it polls faster once it is on.
+  setInterval(function(){ if(!rotate.on) refreshSessions(); }, 30000);
+  setInterval(function(){ if(rotate.on) refreshSessions(); }, 5000);
 
   /* ===================================================================
      11. CONSOLE
@@ -2823,6 +2876,22 @@
     btnRec.disabled = true;
     btnRec.title = "This browser cannot record the canvas";
   }
+
+  /* --- rotate control ------------------------------------------------ */
+  var btnRotate = document.getElementById("btn-rotate");
+  function syncRotateUI(){
+    if(!btnRotate) return;   // called from the poll, which can beat this block
+    btnRotate.setAttribute("aria-pressed", rotate.on ? "true" : "false");
+    if(!rotate.on){ btnRotate.textContent = "Rotate"; return; }
+    var n = rotate.list.length;
+    btnRotate.textContent = n ? "Rotate " + n : "Rotate \u2014";
+  }
+  btnRotate.addEventListener("click", function(){
+    rotate.on = !rotate.on;
+    rotate.until = 0;                  // switch on the next poll, not in 25 s
+    syncRotateUI();
+    if(rotate.on) refreshSessions();
+  });
 
   /* --- fullscreen ---------------------------------------------------
      Kiosk mode for a screen in the corner of the room. The browser also

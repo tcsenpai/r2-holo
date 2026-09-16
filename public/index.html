@@ -334,6 +334,7 @@
     <button class="btn" id="btn-replay" aria-pressed="false">Replay</button>
     <button class="btn" id="btn-rec" aria-pressed="false"><span id="rec-dot"></span><span id="rec-label">Record</span></button>
     <button class="btn" id="btn-reset">Reset view</button>
+    <button class="btn" id="btn-rotate" aria-pressed="false">Rotate</button>
     <button class="btn" id="btn-full" aria-pressed="false">Fullscreen</button>
     <button class="btn" id="btn-info" aria-haspopup="dialog">Info</button>
     <div id="hint">Drag to orbit &middot; scroll to zoom &middot; WASD to fly, Q/E height, Shift boost, R recenter, F fullscreen</div>
@@ -381,6 +382,10 @@
       <h3>When it asks you something</h3>
       <p>A droid waiting on an answer stops where it is, turns to face you and holds the question up: a plate carried in front of the dome on a cone of light, a question bar over a short list of choices, a caret walking the options. It is an unstable projection on purpose &mdash; scan lines crawl, the beat flickers and occasionally drops out, the whole plate drifts &mdash; because a steady rectangle reads as a label stuck on the screen rather than something the droid is projecting.</p>
       <p><b>The panel carries no text.</b> The wording of the question never leaves your disk, so what you see is that there <em>is</em> a question and roughly how many ways it can go, not what it says. Only the droid that asked stops; everything else in the bay carries on working, so a stalled unit stands out against the movement rather than freezing the room. Under <span class="code">prefers-reduced-motion</span> the plate holds steady.</p>
+
+      <h3>On a wall</h3>
+      <p><b>Rotate</b> turns the page into a display for a screen you leave on. It watches only the sessions that have moved in the last minute and cycles them every 25 seconds, so an idle machine settles on the one session still working instead of flicking through forty dead ones. The button shows how many are in the rotation.</p>
+      <p>It will not cut away mid-sentence: while the droid is talking, or holding a question up, the switch waits. Replay and recording hold it off too. Pair it with <b>F</b> for fullscreen and <span class="code">bun run lan</span> if the screen is a different machine.</p>
 
       <h3>Replay and recording</h3>
       <p><b>Replay</b> opens a transport over everything the page has received since you connected &mdash; the backlog the server replays on connect, plus whatever has arrived since. Drag the scrubber to land anywhere in that span, or let it play at 1&times; to 8&times;. Events that keep arriving while you are in the past are still recorded, so <b>Live</b> always returns to a current world rather than a stale one.</p>
