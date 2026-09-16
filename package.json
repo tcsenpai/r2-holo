@@ -24,6 +24,7 @@
   "scripts": {
     "start": "bun run server.ts",
     "dev": "PORT=8080 bun run server.ts",
-    "test": "bun test"
+    "test": "bun test",
+    "lan": "bun run server.ts --lan"
   }
 }

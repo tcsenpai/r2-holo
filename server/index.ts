@@ -6,7 +6,7 @@
  */
 import { stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { HOST, PORT, PUBLIC, ROOT } from "./config.ts";
+import { HOST, PORT, PUBLIC, ROOT, lanAddress } from "./config.ts";
 import { clampLimit, listSessions } from "./sessions.ts";
 import { insideRoot, streamSession } from "./stream.ts";
 
@@ -50,11 +50,17 @@ Bun.serve({
   },
 });
 
+const onLan = HOST !== "127.0.0.1" && HOST !== "localhost";
+const lan = onLan ? lanAddress() : null;
+
 console.log(`\n  R2 Holotable`);
 console.log(`  sessions from  ${ROOT}`);
 console.log(`  listening on   http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT}`);
-if (HOST !== "127.0.0.1" && HOST !== "localhost") {
-  console.log(`  ⚠ reachable from the network on ${HOST} — anyone who can`);
-  console.log(`    reach this port can read your transcripts.`);
+if (lan) console.log(`  on this network http://${lan}:${PORT}`);
+if (onLan) {
+  console.log(`  ⚠ anyone who can reach this port can read your session`);
+  console.log(`    names, tools and costs. There is no password.`);
+} else {
+  console.log(`  (localhost only — bun run server.ts --lan opens it to the network)`);
 }
 console.log("");

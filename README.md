@@ -35,12 +35,35 @@ prompts, no tool output, no diffs. Only the shape of what happens.
 
 `/api/stream` rejects any path outside `~/.claude/projects` with a 403.
 
+## Watching from another device
+
+```
+bun run lan                # or: bun run server.ts --lan
+```
+
+The server prints the address other devices should use, picking the private
+LAN interface over any VPN or tunnel that also reports one:
+
+```
+  listening on   http://localhost:4242
+  on this network http://192.168.1.17:4242
+  ⚠ anyone who can reach this port can read your session
+    names, tools and costs. There is no password.
+```
+
+That warning is the whole story: there is no authentication, so on a network
+you do not control this is the wrong thing to run. `HOST=0.0.0.0` does the same
+as `--lan` if you prefer the environment variable.
+
+**F** toggles fullscreen, which is what you want on the spare screen this ends
+up on.
+
 ## Security and privacy
 
-There is no authentication, so the server binds to `127.0.0.1`: on a shared
-network nobody else can reach it. `HOST=0.0.0.0 bun run server.ts` overrides
-that and prints a warning at startup; past that point anyone who can reach the
-port gets everything below.
+There is no authentication, so the server binds to `127.0.0.1` unless you ask
+otherwise: on a shared network nobody else can reach it. `--lan` (or
+`HOST=0.0.0.0`) opens it up and warns at startup; past that point anyone who can
+reach the port gets everything below.
 
 Even with the content staying on disk, the page still exposes:
 

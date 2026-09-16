@@ -4,7 +4,7 @@
  * behaviour is unchanged — only the location moved.
  */
 import { join, resolve } from "node:path";
-import { homedir } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 
 export const ROOT = resolve(join(homedir(), ".claude", "projects"));
 const portRaw = Number(process.env.PORT ?? 4242);
@@ -12,7 +12,25 @@ export const PORT = Number.isFinite(portRaw) ? portRaw : 4242;
 /** Loopback by default: this server hands out the contents of your Claude
  *  transcripts, so on a shared network anyone who knows the port could read
  *  your prompts and project paths. Set HOST to expose it deliberately. */
-export const HOST = process.env.HOST ?? "127.0.0.1";
+export const HOST = (process.env.HOST ?? (Bun.argv.includes("--lan") ? "0.0.0.0" : "127.0.0.1"));
+
+/** Best guess at the address other devices on the network should use.
+ *  Tunnel interfaces (VPNs, Tailscale) also report non-internal IPv4, so
+ *  private LAN ranges win over anything else before falling back. */
+export function lanAddress(): string | null {
+  const isPrivate = (ip: string) =>
+    ip.startsWith("192.168.") || ip.startsWith("10.") ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(ip);
+  let fallback: string | null = null;
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family !== "IPv4" || a.internal) continue;
+      if (isPrivate(a.address)) return a.address;
+      fallback ??= a.address;
+    }
+  }
+  return fallback;
+}
 export const PUBLIC = join(import.meta.dir, "..", "public");
 
 // Session index

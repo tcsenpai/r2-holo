@@ -2824,6 +2824,38 @@
     btnRec.title = "This browser cannot record the canvas";
   }
 
+  /* --- fullscreen ---------------------------------------------------
+     Kiosk mode for a screen in the corner of the room. The browser also
+     leaves fullscreen on its own (Esc, or the user swapping apps), so the
+     button follows the fullscreenchange event rather than its own flag. */
+  var btnFull = document.getElementById("btn-full");
+  var appEl = document.getElementById("app");
+  function fsElement(){
+    return document.fullscreenElement || document.webkitFullscreenElement || null;
+  }
+  function toggleFullscreen(){
+    if(fsElement()){
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } else {
+      var go = appEl.requestFullscreen || appEl.webkitRequestFullscreen;
+      if(!go){ btnFull.disabled = true; return; }
+      // a rejected promise here just means the gesture was not trusted
+      var r = go.call(appEl);
+      if(r && r.catch) r.catch(function(){});
+    }
+  }
+  function syncFull(){
+    btnFull.setAttribute("aria-pressed", fsElement() ? "true" : "false");
+    btnFull.textContent = fsElement() ? "Exit full" : "Fullscreen";
+  }
+  btnFull.addEventListener("click", toggleFullscreen);
+  document.addEventListener("fullscreenchange", syncFull);
+  document.addEventListener("webkitfullscreenchange", syncFull);
+  if(!(appEl.requestFullscreen || appEl.webkitRequestFullscreen)){
+    btnFull.disabled = true;
+    btnFull.title = "This browser cannot go fullscreen";
+  }
+
   /* --- replay transport ------------------------------------------- */
   var transport = document.getElementById("transport");
   var btnReplay = document.getElementById("btn-replay");
@@ -2903,6 +2935,7 @@
     }
     // R re-anchors the freefly camera onto the droid
     else if(e.code === "KeyR" && viewMode === "orbit"){ flyRelease(); camGoal = null; }
+    else if(e.code === "KeyF") toggleFullscreen();
     if(e.code === "Space" || e.code.indexOf("Arrow") === 0) e.preventDefault();
   });
   document.addEventListener("keyup",function(e){ keys[e.code] = false; });
