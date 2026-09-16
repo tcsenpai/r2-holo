@@ -19,7 +19,7 @@ is vendored and there are no dependencies.
 ```
 bun run server.ts          # http://127.0.0.1:4242
 PORT=8080 bun run server.ts
-bun test                   # 71 tests
+bun test                   # 76 tests
 ```
 
 ## Watch it run
@@ -193,7 +193,11 @@ The only things that hold a switch are an open question and your own use of the
 page — replay or recording. Talking does not: a busy session emits prose
 continuously, and waiting on that meant the rotation almost never fired.
 `tests/rotate.test.ts` pins the activity window, including the case where a
-missing timestamp must read as quiet rather than as now.
+missing timestamp must read as quiet rather than as now, and the one that
+actually bit: the destination is chosen by asking "is there somewhere better
+than here", not "are there two active sessions". Once the session on screen
+goes quiet it leaves the active list, and counting actives instead of
+destinations pinned the display on a dead session with a live one available.
 
 With **F** for fullscreen and `bun run lan` for a screen on another machine,
 that is the whole wall-display setup.

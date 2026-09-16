@@ -2816,22 +2816,34 @@
     if(isAsk(mainPend)) return false;
     return true;
   }
+  /* Pick where to go next. The question is not "are there two active
+     sessions" but "is there somewhere better than here": if the session
+     on screen has gone quiet it is no longer in the active list, and a
+     single live session elsewhere is a perfectly good destination.
+     Counting active sessions instead of destinations is what pinned the
+     display on a dead session with one live one sitting right there. */
+  function nextInRotation(act, current){
+    if(!act.length) return null;
+    var here = -1;
+    for(var i=0;i<act.length;i++) if(act[i].path === current){ here = i; break; }
+    if(here < 0) return act[0].path;       // current is dead: any live one wins
+    if(act.length < 2) return null;        // the only live one is where we are
+    return act[(here + 1) % act.length].path;
+  }
   function rotateStep(list){
     if(!rotate.on) return;
     var act = activeFrom(list);
     rotate.list = act;
     syncRotateUI();
-    if(act.length < 2) return;             // nothing to rotate between
     if(Date.now() < rotate.until) return;
     if(!safeToSwitch()){                   // check again on the next tick
       rotate.until = Date.now() + 1500;
       return;
     }
-    var here = act.findIndex(function(s){ return s.path === sel.value; });
-    var next = act[(here + 1) % act.length];
-    if(next && next.path !== sel.value){
-      sel.value = next.path;
-      connect(next.path);
+    var next = nextInRotation(act, sel.value);
+    if(next && next !== sel.value){
+      sel.value = next;
+      connect(next);
     }
     rotate.until = Date.now() + DWELL;
   }
