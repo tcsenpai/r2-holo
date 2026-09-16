@@ -19,7 +19,7 @@ is vendored and there are no dependencies.
 ```
 bun run server.ts          # http://127.0.0.1:4242
 PORT=8080 bun run server.ts
-bun test                   # 63 tests
+bun test                   # 71 tests
 ```
 
 ## Watch it run
@@ -154,6 +154,27 @@ while a quiet one spreads them over days. What works is to take the last 120
 events and let them set their own scale: the ring fills either way, and the
 span is what differs.
 
+## Twin suns
+
+A wall display at full brightness at 2am is a lamp, not a picture. The room
+answers the clock instead: the light rises through the morning, peaks at
+midday and falls back to a floor at night — never to black, because the
+hologram is its own light source.
+
+Tatooine orbits two of them, which is a better mechanism than a dimmer
+slider. Tatoo II trails its primary by a couple of hours, so they rise apart,
+cross near midday and set apart. That gives the long double sunset the planet
+is known for, and it falls out of the offset rather than being animated.
+
+Both discs sit low and dim on the far wall, deliberately small: the droid is
+the subject, the sky is weather. **Suns** turns the whole thing off if you
+want constant brightness, and the choice persists.
+
+`skyAt()` is pure and `tests/sky.test.ts` covers a full day, including the
+case the whole thing exists for: night must be dimmer than day, and never
+zero. Removing the offset — making it one sun drawn twice — fails three of
+those tests.
+
 ## On a wall
 
 **Rotate** cycles the sessions that are actually doing something: anything whose
@@ -267,7 +288,7 @@ public/index.html      layout, palette, info modal
 public/holotable.js    procedural model, rig, reactions
 public/three.min.js    r128, served locally (no CDN)
 tests/                 contract, normalisation, escaping, guards,
-                       replay, rotate, multiplex, ring
+                       replay, rotate, multiplex, ring, sky
 ```
 
 Splitting the wire format across two files invites them to drift apart, so

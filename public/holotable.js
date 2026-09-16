@@ -257,6 +257,7 @@
      2. SCENE
      =================================================================== */
   var stage = document.getElementById("stage");
+  var emitterEl = document.getElementById("emitter");   // the floor glow
   var scene = new THREE.Scene();
   scene.fog = new THREE.FogExp2(0x03070e, 0.0085);
   var camera = new THREE.PerspectiveCamera(42, 1, 0.1, 400);
@@ -2975,6 +2976,18 @@
     btnRec.title = "This browser cannot record the canvas";
   }
 
+  /* --- twin suns control --------------------------------------------
+     Off is a real setting, not a fallback: on a wall in a lit office you
+     may want full brightness at midnight, and the room should not argue. */
+  var btnSky = document.getElementById("btn-sky");
+  function syncSky(){
+    if(btnSky) btnSky.setAttribute("aria-pressed", skyOn ? "true" : "false");
+    skyAcc = 99;          // apply on the next frame rather than in 20 s
+    updateSky();
+    savePrefs();
+  }
+  if(btnSky) btnSky.addEventListener("click", function(){ skyOn = !skyOn; syncSky(); });
+
   /* --- room control --------------------------------------------------
      Room and Rotate are alternatives, not companions: rotating through
      sessions one at a time is what you do when you can only see one, and
@@ -3584,7 +3597,7 @@
     try{
       localStorage.setItem(PREFS_KEY, JSON.stringify({
         panel:readoutOpen, shop:shopOn, roam:roamOn, spin:autoSpin,
-        scan:scanOn, sound:(SOUND.on || soundArmed)
+        scan:scanOn, sound:(SOUND.on || soundArmed), sky:skyOn
       }));
     }catch(e){}
   }
@@ -3601,6 +3614,7 @@
     try{ p = JSON.parse(localStorage.getItem(PREFS_KEY) || "null"); }catch(e){}
     if(!p || typeof p !== "object") return;
     if(typeof p.shop === "boolean") shopOn = p.shop;
+    if(typeof p.sky === "boolean") skyOn = p.sky;
     if(typeof p.roam === "boolean") roamOn = p.roam;
     if(typeof p.spin === "boolean") autoSpin = p.spin;
     if(typeof p.scan === "boolean" && !reduce) scanOn = p.scan;
@@ -3610,6 +3624,7 @@
 
   loadPrefs();
   applyCamera(); select(SYSTEMS[0].id); syncRoam(); syncShop(); syncSpin(); syncScan();
+  syncSky();   // after loadPrefs, so the button matches the stored choice
   showReadout(prefPanel);
   markShared();
 
@@ -3686,6 +3701,115 @@
     var span = histSpan();
     rebuildTo(span[1]);
     syncReplayUI();
+  }
+
+  /* --- the twin suns -------------------------------------------------
+     Tatooine orbits Tatoo I and Tatoo II. Here they carry something the
+     display actually needed: a wall screen at full brightness at 2am is
+     a lamp, not a picture. Tying light to the real clock fixes that, and
+     the binary pair is the canon excuse for doing it with two offsets
+     instead of one dimmer slider.
+
+     Tatoo II trails its primary by a few hours, so the two rise apart,
+     cross near midday and set apart — the long double sunset being the
+     thing anyone actually remembers about that sky. */
+  var SUNS = [
+    { period: 24, offset: 0.0,  warm: 0.35, size: 1.00 },   // Tatoo I
+    { period: 24, offset: 2.6,  warm: 0.75, size: 0.72 }    // Tatoo II, trailing
+  ];
+
+  /* Elevation of each sun at a given hour, -1 (deep night) to 1 (zenith),
+     plus the combined daylight the room should sit at.
+     Pure: the whole day is checkable without rendering a frame. */
+  function skyAt(hours){
+    var out = [], light = 0, warmth = 0;
+    for(var i=0;i<SUNS.length;i++){
+      var S = SUNS[i];
+      // day runs 06:00-18:00 for the primary; sin peaks at local noon
+      var phase = ((hours - S.offset - 6) / S.period) * Math.PI * 2;
+      var elev = Math.sin(phase);
+      out.push(elev);
+      if(elev > 0){
+        light += elev * (i === 0 ? 0.62 : 0.38);       // primary carries more
+        // low sun is warm, high sun is white: the horizon does the colour
+        warmth += S.warm * (1 - elev) * elev * 2;
+      }
+    }
+    return {
+      elev: out,
+      // never fully dark: the hologram is its own light source
+      light: clamp(0.12 + light, 0.12, 1),
+      warmth: clamp(warmth, 0, 1)
+    };
+  }
+
+  /* Two discs low on the far wall. Kept deliberately small, dim and
+     behind everything: the droid is the subject, the sky is weather.
+     They sit outside the bay markings so they never crowd the floor. */
+  var SKY = (function(){
+    var g = new THREE.Group();
+    var discs = [];
+    for(var i=0;i<SUNS.length;i++){
+      var r = 1.55 * SUNS[i].size;
+      var m = lineMaterial(AMBER, 0);
+      var o = new THREE.Mesh(
+        new THREE.CircleGeometry(r, 28),
+        new THREE.MeshBasicMaterial({ color:AMBER, transparent:true, opacity:0,
+          blending:THREE.AdditiveBlending, depthWrite:false }));
+      var ring = new THREE.LineLoop(
+        new THREE.BufferGeometry().setAttribute("position",
+          (function(){
+            var p = [];
+            for(var k=0;k<28;k++){
+              var a = (k/28)*Math.PI*2;
+              p.push(Math.cos(a)*r*1.08, Math.sin(a)*r*1.08, 0);
+            }
+            return new THREE.Float32BufferAttribute(p, 3);
+          })()), m);
+      var holder = new THREE.Group();
+      holder.add(o); holder.add(ring);
+      g.add(holder);
+      discs.push({ holder:holder, disc:o, ring:ring, mat:m });
+    }
+    g.position.set(0, 0, -26);       // far side of the room, behind the bay
+    scene.add(g);
+    return { group:g, discs:discs };
+  })();
+
+  var skyOn = true, skyNow = null, skyAcc = 99;   // 99: first frame updates
+  function updateSky(){
+    // startup calls this before the SKY group is built (the prefs sync runs
+    // earlier in the file than the geometry); the loop picks it up regardless
+    if(typeof SKY === "undefined" || !SKY) return;
+    var d = new Date();
+    var hours = d.getHours() + d.getMinutes()/60;
+    var sky = skyAt(hours);
+    skyNow = sky;
+
+    for(var i=0;i<SKY.discs.length;i++){
+      var D = SKY.discs[i], e = sky.elev[i];
+      var up = e > -0.12;                       // a little below counts as rising
+      D.holder.visible = skyOn && up;
+      if(!D.holder.visible) continue;
+      // arc across the far wall: elevation lifts it, phase slides it sideways
+      D.holder.position.set(e * 9 - (i ? 5 : -5), 2.2 + Math.max(0, e) * 7.5, 0);
+      var a = Math.max(0, Math.min(1, (e + 0.12) / 0.5));
+      D.disc.material.opacity = 0.05 * a;
+      D.mat.opacity = 0.16 * a;
+      // low sun burns amber, high sun cools toward the projection blue
+      var hot = 1 - Math.max(0, e);
+      D.disc.material.color.copy(PROJ).lerp(AMBER, 0.35 + hot * 0.5);
+      D.mat.color.copy(D.disc.material.color);
+    }
+
+    // the room answers the sky: brighter and warmer by day, dim at night
+    if(skyOn){
+      emitterEl.style.opacity = (0.35 + sky.light * 0.65).toFixed(3);
+      stage.style.filter = "brightness(" + (0.55 + sky.light * 0.45).toFixed(3) + ")";
+    } else {
+      emitterEl.style.opacity = "1";
+      stage.style.filter = "";
+    }
   }
 
   /* The pulse ring: one faint tick per time slot, laid flat at the very
@@ -3831,6 +3955,8 @@
     drainQueue(dt);
     stepReplay(dt);
     updatePulse(dt);
+    skyAcc += dt;
+    if(skyAcc > 20){ skyAcc = 0; updateSky(); }   // the sky moves slowly
 
     var decay = Math.exp(-1.9*dt);
     MODKEYS.forEach(function(k){ MOD[k].p *= decay; });
