@@ -24,11 +24,11 @@ bun test                   # 63 tests
 
 ## Watch it run
 
-<!-- Drop the mp4 into the GitHub editor here and paste the link it returns,
-     replacing this comment and the line below. GitHub plays mp4 and mov
-     inline; it will not play a webm. -->
 
-_(demo video goes here)_
+
+https://github.com/user-attachments/assets/e0df7448-a8a4-49da-b3ca-47c7202372d8
+
+
 
 ## What it reads
 
