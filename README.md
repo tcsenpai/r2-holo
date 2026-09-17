@@ -19,7 +19,7 @@ is vendored and there are no dependencies.
 ```
 bun run server.ts          # http://127.0.0.1:4242
 PORT=8080 bun run server.ts
-bun test                   # 91 tests
+bun test                   # 100 tests
 ```
 
 ## Watch it run
@@ -284,6 +284,12 @@ id anywhere in the format. So when a subagent calls `Task` and a new agent file
 appears shortly after, the page attaches that droid to it as a child, places it
 in orbit around its parent and tethers it there. It is a timing heuristic, and
 the Info panel says so.
+
+The heuristic is scoped to one session. In Room mode several independent
+sessions share the same event path, and a single global slot let a `Task` in
+one session claim a droid belonging to another — two unrelated sessions
+rendered as parent and child. Nesting now only happens within a session, and a
+session droid is a peer that can neither adopt nor be adopted.
 
 ## Colour channels
 

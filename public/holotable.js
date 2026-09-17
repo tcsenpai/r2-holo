@@ -985,7 +985,31 @@
   // The transcript has no parent id: attributionAgent is the agent TYPE.
   // So nesting is inferred — the last subagent that called Task claims the
   // next agent file that shows up. Timing-based, and labelled as such.
-  var lastTask = { agent:null, at:0 };
+  //
+  // In Room mode several independent sessions share this one event handler,
+  // so the slot is keyed by session (sesKey, stamped by routed()). Without
+  // that key a Task seen in session A could claim a droid that just showed
+  // up in session B — two unrelated top-level sessions would render as
+  // parent/child. One slot per session keeps nesting inside its own session.
+  var lastTaskBySes = {};    // sesKey -> { agent, at }
+
+  // Pure decision: does a droid appearing in `sesKey` right now get nested
+  // under lastTaskBySes[sesKey]? Extracted so it can be unit-tested without
+  // the THREE.js scene graph. A session droid (isSession) is a peer, never
+  // a helper, so it can neither claim a child nor be claimed as one.
+  function nestParentFor(sesKey, id, now, agents, tasks, nestWindow){
+    // checked by id prefix, not agents[id].isSession: the droid for `id`
+    // may not exist yet (this runs to DECIDE whether to create it)
+    if(id.indexOf(SES_PREFIX) === 0) return null;  // a session droid is never nested
+    var last = tasks[sesKey];
+    if(!last || !last.agent) return null;
+    if(last.agent === id) return null;
+    var P = agents[last.agent];
+    if(!P) return null;
+    if(P.isSession) return null;               // never nest under a session droid
+    if(now - last.at >= nestWindow) return null;
+    return last.agent;
+  }
   // During a backlog replay only agents that were still active near the end
   // get a droid, otherwise every subagent that ever ran would materialise.
   var aliveFilter = null;
@@ -1016,17 +1040,14 @@
   var SHARED = new Set();
   function markShared(){ SHARED.clear(); Object.keys(G).forEach(function(k){ SHARED.add(G[k]); }); }
 
-  function ensureAgent(id, model, evTime){
+  function ensureAgent(id, model, evTime, sesKey){
     if(AGENTS[id]) return AGENTS[id];
     if(aliveFilter && !aliveFilter.has(id)) return null;   // long finished
     if(evTime && Date.now() - evTime > AGENT_TTL) return null;
 
-    // inferred parent: a subagent that called Task moments ago
-    var parentId = null;
-    if(lastTask.agent && lastTask.agent !== id && AGENTS[lastTask.agent] &&
-       Date.now() - lastTask.at < NEST_WINDOW){
-      parentId = lastTask.agent;
-    }
+    // inferred parent: a subagent that called Task moments ago, in the SAME
+    // session (see lastTaskBySes above for why sesKey matters here)
+    var parentId = nestParentFor(sesKey, id, Date.now(), AGENTS, lastTaskBySes, NEST_WINDOW);
 
     var slot = freeSlot();
     var wrap = new THREE.Group();
@@ -2534,12 +2555,13 @@
       if(!silent) sonarReq = true;        // ...but rings only fire live, not on replay
     }
 
+    var sesKey = ev.sesKey || primaryPath || "primary";
     if(ev.agent && ev.kind==="tool" && ev.tool==="Task"){
-      lastTask = { agent: ev.agent, at: Math.min(Date.now(), ev.t || Date.now()) };
+      lastTaskBySes[sesKey] = { agent: ev.agent, at: Math.min(Date.now(), ev.t || Date.now()) };
     }
 
     if(ev.agent){
-      var A = ensureAgent(ev.agent, ev.model, ev.t);
+      var A = ensureAgent(ev.agent, ev.model, ev.t, sesKey);
       if(!A){ if(!silent) pushTick(ev, false); return; }
       A.lastAt = Math.min(Date.now(), ev.t || Date.now());
       if(ev.model) A.model = ev.model;
@@ -2734,9 +2756,22 @@
   }
   /* Route an event to its droid. Events from the primary session keep the
      old path exactly; events from another session are re-tagged as that
-     session's droid so the existing agent machinery animates them. */
+     session's droid so the existing agent machinery animates them.
+
+     sesKey is stamped on every event here, because this is the only place
+     that still knows the real originating session once .agent has possibly
+     been rewritten. Nesting (see lastTaskBySes below) is keyed off sesKey, not
+     off .agent, precisely so two sessions can never be confused for one
+     another even after one collapses onto a "ses:" id that looks like an
+     ordinary agent id. */
   function routed(ev){
-    if(!ev.ses || ev.ses === primaryPath) return ev;
+    if(!ev.ses || ev.ses === primaryPath){
+      if(ev.sesKey) return ev;
+      var same = {};
+      for(var k2 in ev) same[k2] = ev[k2];
+      same.sesKey = primaryPath || "primary";
+      return same;
+    }
     var id = sesOf[ev.ses];
     if(!id) return null;             // a session we are not showing
     var copy = {};
@@ -2744,6 +2779,7 @@
     // a subagent of another session collapses into that session's droid:
     // showing someone else's subagents would crowd the floor past reading
     copy.agent = id;
+    copy.sesKey = ev.ses;
     return copy;
   }
 
