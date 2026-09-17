@@ -2804,9 +2804,16 @@
     es=new EventSource("/api/stream?" + qs);
     es.addEventListener("backlog", function(e){
       var evs=JSON.parse(e.data);
-      // only spawn droids for subagents that were still working at the end
+      // Only spawn droids for subagents that were still working at the end.
+      // Built from the ROUTED events, not the raw ones: in Room mode
+      // routed() rewrites .agent onto the session's own droid id, so a
+      // filter built from raw ids would never contain "ses:xxxxxx" and
+      // every session but the primary would be refused a droid — the
+      // display showed one droid no matter how many sessions were live.
+      var routedEvs = [];
+      evs.forEach(function(ev){ var r = routed(ev); if(r) routedEvs.push(r); });
       var lastByAgent={}, newest=0;
-      evs.forEach(function(ev){
+      routedEvs.forEach(function(ev){
         if(ev.agent) lastByAgent[ev.agent]=Math.max(lastByAgent[ev.agent]||0, ev.t);
         if(ev.t>newest) newest=ev.t;
       });
@@ -2814,7 +2821,7 @@
       Object.keys(lastByAgent).forEach(function(id){
         if(newest - lastByAgent[id] < AGENT_TTL) aliveFilter.add(id);
       });
-      evs.forEach(function(ev){ var r = routed(ev); if(r) handle(r, true); });
+      routedEvs.forEach(function(ev){ handle(ev, true); });
       aliveFilter=null;
       evs.slice(-9).forEach(function(ev){ pushTick(ev, true); });
       MODKEYS.forEach(function(k){ MOD[k].p=0; });

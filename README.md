@@ -19,7 +19,7 @@ is vendored and there are no dependencies.
 ```
 bun run server.ts          # http://127.0.0.1:4242
 PORT=8080 bun run server.ts
-bun test                   # 100 tests
+bun test                   # 105 tests
 ```
 
 ## Watch it run
